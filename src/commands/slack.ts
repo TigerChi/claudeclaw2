@@ -277,10 +277,13 @@ async function sendMessage(
   const normalized = text.replace(/\[react:[^\]\r\n]+\]/gi, "").trim();
   if (!normalized) return;
 
+  // Convert standard markdown to Slack mrkdwn so bold/links/etc render.
+  const mrkdwn = markdownToSlackMrkdwn(normalized);
+
   // Slack max message length is 40000 chars, chunk at 3800 for mrkdwn block limits
   const MAX_LEN = 3800;
-  for (let i = 0; i < normalized.length; i += MAX_LEN) {
-    const chunk = normalized.slice(i, i + MAX_LEN);
+  for (let i = 0; i < mrkdwn.length; i += MAX_LEN) {
+    const chunk = mrkdwn.slice(i, i + MAX_LEN);
     const params: Record<string, unknown> = {
       channel: channelId,
       text: chunk,
@@ -498,10 +501,13 @@ async function sendBlockKitMessage(
 ): Promise<string | null> {
   const blocks: Record<string, unknown>[] = [];
 
-  if (text) {
+  // Block-kit section.mrkdwn expects Slack mrkdwn, not standard markdown.
+  const mrkdwnText = markdownToSlackMrkdwn(text);
+
+  if (mrkdwnText) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text },
+      text: { type: "mrkdwn", text: mrkdwnText },
     });
   }
 
@@ -541,7 +547,7 @@ async function sendBlockKitMessage(
 
   const params: Record<string, unknown> = {
     channel: channelId,
-    text: text || "Interactive message",
+    text: mrkdwnText || "Interactive message",
     blocks,
   };
   if (threadTs) params.thread_ts = threadTs;
