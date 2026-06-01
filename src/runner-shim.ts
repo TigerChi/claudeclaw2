@@ -70,18 +70,24 @@ function startSessionCleanup(): void {
   const cfg: any = (context.settings as any).sessionCleanup ?? {};
   const idleHours = typeof cfg.idleTimeoutHours === "number" ? cfg.idleTimeoutHours : 168;
   const checkMin = typeof cfg.checkIntervalMinutes === "number" ? cfg.checkIntervalMinutes : 30;
-  if (idleHours <= 0 || checkMin <= 0) {
-    console.log("[runner-shim] session cleanup disabled (idleTimeoutHours or checkIntervalMinutes <= 0)");
+  const maxMemMb = typeof cfg.maxMemoryMb === "number" ? cfg.maxMemoryMb : 0;
+  if ((idleHours <= 0 && maxMemMb <= 0) || checkMin <= 0) {
+    console.log("[runner-shim] session cleanup disabled (no policy or checkInterval <= 0)");
     return;
   }
   if (cleanupTimer) clearInterval(cleanupTimer);
-  // Run once on start to catch sessions that were already idle when we
-  // booted, then on the configured interval.
-  void cleanupIdleSessions(idleHours);
-  cleanupTimer = setInterval(() => void cleanupIdleSessions(idleHours), checkMin * 60_000);
-  console.log(
-    `[runner-shim] session cleanup: idleTimeout=${idleHours}h, check every ${checkMin}m`,
-  );
+  void runCleanupTick(idleHours, maxMemMb);
+  cleanupTimer = setInterval(() => void runCleanupTick(idleHours, maxMemMb), checkMin * 60_000);
+  const policy = [
+    idleHours > 0 ? `idleTimeout=${idleHours}h` : null,
+    maxMemMb > 0 ? `maxMemoryMb=${maxMemMb}` : null,
+  ].filter(Boolean).join(", ");
+  console.log(`[runner-shim] session cleanup: ${policy}, check every ${checkMin}m`);
+}
+
+async function runCleanupTick(idleHours: number, maxMemMb: number): Promise<void> {
+  if (idleHours > 0) await cleanupIdleSessions(idleHours);
+  if (maxMemMb > 0) await cleanupOverMemory(maxMemMb);
 }
 
 async function cleanupIdleSessions(idleHours: number): Promise<void> {
@@ -102,18 +108,92 @@ async function cleanupIdleSessions(idleHours: number): Promise<void> {
   if (candidates.length === 0) return;
   console.log(`[runner-shim] cleaning up ${candidates.length} idle channel(s)`);
   for (const { key, ageH } of candidates) {
-    const entry = channels.get(key);
-    if (!entry) continue;
-    console.log(
-      `[runner-shim]   ${key} idle for ${ageH}h → killing tmux (session entry preserved for resume)`,
-    );
-    try {
-      await entry.channel.shutdown();
-    } catch (err) {
-      console.error(`[runner-shim] cleanup ${key}:`, err);
-    }
-    channels.delete(key);
+    await evictChannel(key, `idle ${ageH}h`);
   }
+}
+
+/**
+ * Memory-cap LRU eviction. When the TOTAL RSS of THIS agent's `claude`
+ * processes exceeds maxMemMb, kill the oldest-idle channel's tmux and
+ * retry. Repeats until under threshold or no more eligible candidates.
+ *
+ * "This agent's claudes" = `claude` processes whose --append-system-prompt
+ * includes our projectDir. (Each claude is spawned with the agent's project
+ * dir baked into the system prompt by compose.ts.)
+ */
+async function cleanupOverMemory(maxMemMb: number): Promise<void> {
+  if (!context) return;
+  const projectDir = context.projectDir;
+  while (true) {
+    const totalMb = await measureClaudeRssMb(projectDir);
+    if (totalMb <= maxMemMb) {
+      // Optional: log only on transitions to avoid noise. For now just log every check.
+      return;
+    }
+    // Find oldest IDLE channel
+    const persisted = await loadSessions();
+    let oldestKey: string | null = null;
+    let oldestTs = Infinity;
+    for (const [key, entry] of channels.entries()) {
+      if (entry.channel.currentState !== "idle") continue;
+      const session = persisted[key];
+      if (!session) continue;
+      const lastTs = Date.parse(session.lastActivityAt);
+      if (!Number.isFinite(lastTs)) continue;
+      if (lastTs < oldestTs) {
+        oldestTs = lastTs;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) {
+      console.warn(
+        `[runner-shim] over memory budget (${totalMb.toFixed(0)}MB > ${maxMemMb}MB) but no idle channel to evict`,
+      );
+      return;
+    }
+    const ageMin = Math.round((Date.now() - oldestTs) / 60_000);
+    console.log(
+      `[runner-shim] memory ${totalMb.toFixed(0)}MB > ${maxMemMb}MB cap → evicting LRU channel ${oldestKey} (idle ${ageMin}m)`,
+    );
+    await evictChannel(oldestKey, `LRU memory cap`);
+  }
+}
+
+async function measureClaudeRssMb(projectDir: string): Promise<number> {
+  // ps RSS on all processes, filter `claude` whose cmdline references our projectDir
+  // (every claude spawn includes "scoped to the project directory: <dir>" in
+  // its --append-system-prompt). Cross-agent isolation.
+  try {
+    const proc = Bun.spawn(["ps", "-A", "-ww", "-o", "rss=,command="], { stdout: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    let totalKb = 0;
+    for (const line of out.split("\n")) {
+      if (!line.includes(projectDir)) continue;
+      const m = line.trim().match(/^(\d+)\s+(.+)/);
+      if (!m) continue;
+      const cmd = m[2];
+      // Match the claude binary, not bun/node wrappers
+      if (!/(^|\/|\s)claude(\s|$)/.test(cmd)) continue;
+      totalKb += parseInt(m[1], 10);
+    }
+    return totalKb / 1024;
+  } catch (err) {
+    console.error("[runner-shim] measureClaudeRssMb failed:", err);
+    return 0;
+  }
+}
+
+async function evictChannel(key: string, reason: string): Promise<void> {
+  const entry = channels.get(key);
+  if (!entry) return;
+  console.log(`[runner-shim]   evict ${key} (${reason}) — killing tmux, session entry preserved`);
+  try {
+    await entry.channel.shutdown();
+  } catch (err) {
+    console.error(`[runner-shim] evict ${key}:`, err);
+  }
+  channels.delete(key);
 }
 
 function getCtx(): ShimContext {
