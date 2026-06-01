@@ -17,6 +17,8 @@ export interface AgentRecord {
   startedAt: number | null;
   lastStateAt: number | null;
   linePairing: LinePairingInfo | null;
+  /** Plugin source — "v1" (legacy default) or "v3" (tmux engine). */
+  version: string;
 }
 
 export { agentIdForPath };
@@ -93,6 +95,7 @@ export async function listAgents(): Promise<AgentRecord[]> {
       startedAt: d.startedAt || state.startedAt,
       lastStateAt: state.startedAt,
       linePairing,
+      version: d.version ?? "v1",
     });
   }
 

@@ -60,6 +60,12 @@ export function hubPage(): string {
     .agent .meta { flex: 1; min-width: 0; }
     .agent .path { font-size: 12px; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent .sub { font-size: 11px; color: #8b949e; }
+    .vbadge {
+      display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+      margin-left: 4px; vertical-align: middle; font-weight: 600; letter-spacing: 0.3px;
+    }
+    .vbadge.v-v1 { background: #30363d; color: #8b949e; }
+    .vbadge.v-v3 { background: #1f6feb; color: #fff; }
     section.detail {
       flex: 1;
       padding: 24px;
@@ -448,11 +454,16 @@ export function hubPage(): string {
       } else {
         for (const a of agents) {
           const name = (a.path || "").split("/").filter(Boolean).pop() || a.path;
+          // Tag the daemon's plugin source; v3 (tmux engine) stands out vs
+          // v1 default so it's obvious which agents have migrated.
+          const version = a.version || "v1";
+          const vBadge =
+            '<span class="vbadge v-' + version + '" title="plugin source: ' + version + '">' + version + '</span>';
           aside +=
             '<div class="agent ' + (a.id === state.selectedId ? "active" : "") + '" data-id="' + a.id + '">' +
             '<span class="dot ' + (a.alive ? "alive" : "") + '"></span>' +
             '<div class="meta">' +
-            '<div class="path" title="' + a.path + '">' + name + '</div>' +
+            '<div class="path" title="' + a.path + '">' + name + ' ' + vBadge + '</div>' +
             '<div class="sub">' + (a.alive ? ("PID " + a.pid + (a.web ? " — :" + a.web.port : "")) : "stopped") + '</div>' +
             '</div></div>';
         }
@@ -476,6 +487,7 @@ export function hubPage(): string {
           '<div class="panel"><h3>Agent</h3>' +
           row("Path", agent.path) +
           row("ID", agent.id) +
+          row("Version", agent.version || "v1") +
           row("Status", agent.alive ? "running" : "stopped") +
           row("PID", agent.pid != null ? String(agent.pid) : "—") +
           row("Web", agent.web ? agent.web.host + ":" + agent.web.port : "—") +

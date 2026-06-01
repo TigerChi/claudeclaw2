@@ -67,6 +67,9 @@ class RunHandler {
   onUnblockCb: (() => void) | undefined;
   onResultCb: ((text: string) => void) | undefined;
   unblocked = false;
+  /** Safety timer armed when onTurnEnd fires with empty buffer (extended-
+   *  thinking case). Cleared when a content-bearing turn-end follows. */
+  emptyTurnEndTimer: ReturnType<typeof setTimeout> | null = null;
 
   reset(): void {
     this.buffer = "";
@@ -75,6 +78,10 @@ class RunHandler {
     this.onResultCb = undefined;
     this.unblocked = false;
     this.abort = null;
+    if (this.emptyTurnEndTimer) {
+      clearTimeout(this.emptyTurnEndTimer);
+      this.emptyTurnEndTimer = null;
+    }
   }
 }
 
@@ -160,6 +167,29 @@ async function ensureChannel(key: string): Promise<ChannelEntry> {
     onTurnEnd: () => {
       const final = handler.buffer.trim();
       console.log(`[runner-shim] onTurnEnd key=${key} bufLen=${final.length} hasResolve=${!!handler.resolve}`);
+      // Claude with extended thinking emits TWO end_turn chunks: one for the
+      // thinking block, one for the actual text. Both fire onTurnEnd. We
+      // must not resolve on the first (empty-buffer) one; wait for the
+      // content-bearing one. Fallback: if no content ever comes, the
+      // channel's stall watchdog (2 min) will give up; meanwhile arm a
+      // local safety timer so we don't hang indefinitely.
+      if (!final && handler.resolve) {
+        if (handler.emptyTurnEndTimer) clearTimeout(handler.emptyTurnEndTimer);
+        handler.emptyTurnEndTimer = setTimeout(() => {
+          // Genuine empty reply (rare). Resolve with what we have so caller unblocks.
+          console.log(`[runner-shim] onTurnEnd safety: resolving empty after 60s wait key=${key}`);
+          const r = handler.resolve;
+          handler.resolve = null;
+          handler.reject = null;
+          handler.emptyTurnEndTimer = null;
+          r?.("");
+        }, 60_000);
+        return;
+      }
+      if (handler.emptyTurnEndTimer) {
+        clearTimeout(handler.emptyTurnEndTimer);
+        handler.emptyTurnEndTimer = null;
+      }
       try { handler.onResultCb?.(final); } catch (err) {
         console.error("[runner-shim] onResult threw:", err);
       }

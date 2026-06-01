@@ -9,7 +9,8 @@ export interface DaemonRegistryEntry {
   path: string;
   pid: number;
   startedAt: number;
-  /** Plugin source identifier. v3 writes "v3" so the hub can distinguish. */
+  /** Plugin source ("v1" / "v3"). Absent on entries written by daemons that
+   *  don't set it — hub treats missing as "v1" for back-compat. */
   version?: string;
 }
 
