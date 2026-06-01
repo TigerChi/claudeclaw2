@@ -3,6 +3,7 @@ import { isCancelCommand, CANCEL_CONFIRM_MESSAGE, CANCEL_NOTHING_MESSAGE } from 
 import { getSettings, loadSettings } from "../config";
 import { resetSession, peekSession } from "../sessions";
 import { listThreadSessions, peekThreadSession } from "../sessionManager";
+import { loadSessions as loadChannelSessions } from "../channel-sessions";
 import { transcribeAudioToText } from "../whisper";
 import { resolveSkillPrompt } from "../skills";
 import { mkdir } from "node:fs/promises";
@@ -1377,13 +1378,14 @@ async function handleBlockAction(payload: any): Promise<void> {
   const replyThreadTs = threadTs ?? message?.ts; // still reply in the button's thread or as a new thread
   let sessionThreadId = inThread ? slackThreadId(channelId, threadTs!) : undefined;
 
-  // Fall back to global session when no thread session exists for this threadId.
-  // This handles the case where a top-level message used the global session and
-  // replied in a thread — the button click sees a thread but should continue
-  // in the global session, not create a new one.
+  // Fall back to global session when no channel session exists for this thread.
+  // v2 sessions are keyed by channel-key (e.g. "slack:<channel>:<thread>") not
+  // by the legacy "slk:" thread id, so we map and check the v2 store.
+  // Without this fix, button clicks always routed to global, losing button context.
   if (sessionThreadId) {
-    const existingThread = await peekThreadSession(sessionThreadId);
-    if (!existingThread) {
+    const channelKey = "slack:" + sessionThreadId.slice("slk:".length);
+    const sessions = await loadChannelSessions();
+    if (!sessions[channelKey]) {
       sessionThreadId = undefined;
     }
   }
