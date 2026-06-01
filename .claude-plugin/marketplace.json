@@ -1,15 +1,20 @@
 {
-  "name": "claudeclaw",
+  "name": "claudeclaw2",
   "owner": {
     "name": "moazbuilds"
   },
   "plugins": [
     {
-      "name": "claudeclaw",
+      "name": "claudeclaw2",
       "source": "./",
-      "description": "Cron-like daemon that runs Claude prompts on a schedule",
+      "description": "ClaudeClaw v2 \u2014 tmux + JSONL engine (fork of v1 with hans-style execution, no silent reply)",
       "version": "1.2.0",
-      "keywords": ["cron", "heartbeat", "scheduler", "daemon"],
+      "keywords": [
+        "cron",
+        "heartbeat",
+        "scheduler",
+        "daemon"
+      ],
       "category": "productivity"
     }
   ]
