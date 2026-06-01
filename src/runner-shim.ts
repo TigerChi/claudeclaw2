@@ -207,6 +207,23 @@ async function ensureChannel(key: string): Promise<ChannelEntry> {
     // Tool-use is not surfaced through the shim; if a platform handler
     // wants tool visibility, wire callbacks directly into a Channel.
     onToolUse: () => {},
+    // Capture-pane periodic snapshots while claude is still generating.
+    // Each call SUPERSEDES the previous snapshot (not additive). Feeds
+    // straight into onChunk so streaming subscribers see live progress
+    // even when JSONL writes the whole reply in one shot at end_turn.
+    onStreamPartial: (text) => {
+      if (!handler.onChunkCb) return;
+      if (!text || !text.trim()) return;
+      if (!handler.unblocked) {
+        handler.unblocked = true;
+        try { handler.onUnblockCb?.(); } catch (err) {
+          console.error("[runner-shim] onUnblock threw:", err);
+        }
+      }
+      try { handler.onChunkCb(text); } catch (err) {
+        console.error("[runner-shim] onChunk(partial) threw:", err);
+      }
+    },
   };
 
   const channel = new Channel({

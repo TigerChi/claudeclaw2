@@ -69,6 +69,11 @@ export interface ChannelCallbacks {
    *  the channel is mid-turn (most platforms time out their indicator after
    *  ~5–10s, so this gets retriggered until the turn ends). */
   onTyping?(replyTo: ReplyTarget): Promise<void> | void;
+  /** Optional: emit polled partial assistant text from the TUI pane while a
+   *  turn is in progress. Called repeatedly with the current snapshot; each
+   *  call SUPERSEDES the previous (not additive). Stops as soon as JSONL
+   *  starts emitting real assistant-text events for the turn. */
+  onStreamPartial?(text: string, replyTo: ReplyTarget): Promise<void> | void;
   /** Optional: surface init failures. */
   onError?(err: Error): void;
   /** Optional: a Claude Code permission dialog is visible in the pane.
@@ -95,6 +100,11 @@ const APPROVAL_POLL_MS = 1500;
 /** Resend a typing indicator every N ms while the channel is mid-turn.
  *  Telegram's chat-action expires after 5s, Discord's after ~10s. */
 const TYPING_PULSE_MS = 4000;
+
+/** Cadence for polling the tmux pane to extract in-progress assistant text.
+ *  1.5s is slow enough to avoid overwhelming the platform with edits (Slack
+ *  rate-limits ~1/sec) but fast enough that the user sees something moving. */
+const STREAM_POLL_MS = 1500;
 
 /** Synthesise turn-end this long after a passthrough slash command if no
  *  jsonl event came in — covers UI-only commands like `/reload-plugins`. */
@@ -219,6 +229,37 @@ function stripAnsi(s: string): string {
     .replace(/\[[0-9;]+m/g, "");
 }
 
+/**
+ * Pull the in-progress assistant text out of a tmux capture-pane snapshot.
+ * Claude Code TUI prefixes assistant output with `⏺ ` and shows a `✻ Brewed for Ns`
+ * spinner during generation. We grab text after the latest `⏺ ` up to the
+ * spinner / input separator. Returns "" if nothing useful is visible.
+ *
+ * Best-effort; tolerant to TUI layout changes. If extraction fails, the polled
+ * stream just stays silent — JSONL remains the canonical fallback.
+ */
+function extractAssistantPartial(pane: string): string {
+  const clean = stripAnsi(pane);
+  const markerIdx = clean.lastIndexOf("⏺ ");
+  if (markerIdx < 0) return "";
+  let chunk = clean.slice(markerIdx + 2);
+  const cutPatterns = [
+    /\n\s*✻[^\n]*/,    // "✻ Brewed for Ns" spinner
+    /\n─{20,}/,         // input box separator
+    /\n\s*╭─/,          // status box top border
+    /\n\s*⎿/,           // tool-result indicator
+  ];
+  for (const re of cutPatterns) {
+    const m = chunk.match(re);
+    if (m && m.index !== undefined && m.index < chunk.length) {
+      chunk = chunk.slice(0, m.index);
+    }
+  }
+  const trimmed = chunk.trim();
+  if (trimmed.length < 8) return "";
+  return trimmed;
+}
+
 function renderSourceLine(item: QueueItem): string {
   if (item.source) {
     const s = item.source;
@@ -303,6 +344,16 @@ export class Channel {
    * turn-end themselves via the classifier path.
    */
   private slashIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Capture-pane stream poll. Fires every ~1.5s during running state,
+   *  extracts in-progress assistant text from the TUI pane, emits to
+   *  onStreamPartial callback so chat platforms can edit-in-place even
+   *  when JSONL only writes once at end_turn. */
+  private streamPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Most recent text emitted to onStreamPartial — to dedupe identical polls. */
+  private lastStreamPartial: string = "";
+  /** Set once JSONL has emitted a real assistant-text event for the current
+   *  turn. After that we stop polling — JSONL is canonical. */
+  private gotRealAssistantText: boolean = false;
   /** Fingerprint of the dialog we last raised an approval for, so we don't
    *  spam the operator with duplicate prompts each poll. Cleared when the
    *  pane no longer shows a dialog OR the operator responded. */
@@ -450,11 +501,14 @@ export class Channel {
       ) {
         this.state = "running";
         this.startTypingPulse();
+        this.startStreamPoll();
       }
 
       switch (ev.type) {
         case "assistant-text":
           if (ev.text && ev.text.trim()) {
+            // Canonical text arrived → stop the capture-pane partial poll.
+            this.gotRealAssistantText = true;
             await this.opts.callbacks.onAssistantText(
               ev.text,
               this.currentTurnReplyTo,
@@ -609,6 +663,50 @@ export class Channel {
     this.typingTimer = null;
   }
 
+  /**
+   * Periodically capture the tmux pane to extract claude's in-progress text
+   * and emit it as onStreamPartial. Lets chat platforms edit-in-place even
+   * when JSONL only writes the full response in a single line at end_turn
+   * (which is the common case for pure-text replies).
+   *
+   * Stops automatically once a real assistant-text JSONL event arrives —
+   * the JSONL content is canonical and supersedes any polled partial.
+   */
+  private startStreamPoll(): void {
+    if (this.streamPollTimer) return;
+    if (!this.opts.callbacks.onStreamPartial) return;
+    this.lastStreamPartial = "";
+    this.gotRealAssistantText = false;
+    const tick = async () => {
+      const target = this.currentTurnReplyTo;
+      if (!target) return;
+      if (this.state !== "running") return;
+      if (this.gotRealAssistantText) return; // JSONL took over
+      let pane: string;
+      try {
+        pane = await capturePane(this.opts.session.tmuxSession);
+      } catch {
+        return;
+      }
+      const partial = extractAssistantPartial(pane);
+      if (!partial || partial === this.lastStreamPartial) return;
+      this.lastStreamPartial = partial;
+      try {
+        await this.opts.callbacks.onStreamPartial?.(partial, target);
+      } catch (err) {
+        console.error(`[channel ${this.opts.session.channelKey}] onStreamPartial threw:`, err);
+      }
+    };
+    this.streamPollTimer = setInterval(() => void tick(), STREAM_POLL_MS);
+  }
+
+  private stopStreamPoll(): void {
+    if (this.streamPollTimer) clearInterval(this.streamPollTimer);
+    this.streamPollTimer = null;
+    this.lastStreamPartial = "";
+    this.gotRealAssistantText = false;
+  }
+
   private onTurnEnd(): void {
     if (this.interruptTimer) {
       clearTimeout(this.interruptTimer);
@@ -618,6 +716,7 @@ export class Channel {
     this.clearStallTimer();
     this.stopTypingPulse();
     this.stopApprovalPoll();
+    this.stopStreamPoll();
     this.state = "idle";
     void this.opts.callbacks.onTurnEnd?.();
     void this.drainQueue();
@@ -895,6 +994,7 @@ export class Channel {
 
     this.startTypingPulse();
     this.startApprovalPoll();
+    this.startStreamPoll();
     this.armStallTimer();
     // Count user turns (non-scheduled) for the sticky-window-turns gate
     // in maybeSwitchModel. Bumped before classification so the new
@@ -1095,6 +1195,7 @@ export class Channel {
     this.clearStallTimer();
     this.stopTypingPulse();
     this.stopApprovalPoll();
+    this.stopStreamPoll();
     try {
       await killSession(this.opts.session.tmuxSession);
     } catch {}
