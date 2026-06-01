@@ -324,33 +324,42 @@ async function removeReaction(
 }
 
 // --- Markdown → Slack mrkdwn conversion ---
-// Slack does NOT render standard markdown:
-//   `**bold**` -> shown literal, must be `*bold*` (single asterisk)
-//   `_italic_`  -> already correct
-//   `[label](url)` -> shown literal, must be `<url|label>`
-//   `# Header`  -> shown literal, no real headers, use `*Header*`
+// Slack mrkdwn vs standard markdown:
+//   `**bold**`     -> `*bold*`           (single asterisk)
+//   `*italic*`     -> `_italic_`         (Slack uses underscore for italic)
+//   `***bi***`     -> `*_bi_*`           (nested bold + italic)
+//   `~~strike~~`   -> `~strike~`         (single tilde)
+//   `[label](url)` -> `<url|label>`
+//   `# Header`     -> `*Header*`         (no real headers, use bold)
 //
-// Code blocks (``` … ```) and inline code (`x`) are preserved verbatim so
-// nothing inside gets re-translated.
+// Order is critical: handle bold-italic before bold before italic, and
+// headers LAST so inline formatting inside heading text still works.
+// Code blocks (``` … ```) and inline code (`x`) are preserved verbatim.
 function markdownToSlackMrkdwn(text: string): string {
   if (!text) return text;
-  // Stash code blocks & inline code so the conversion doesn't touch them.
   const stashed: string[] = [];
   const stash = (s: string): string => {
     stashed.push(s);
     return `\x00STASH${stashed.length - 1}\x00`;
   };
   let s = text;
-  // Fenced code blocks first (preserve whole block including ```)
+  // Stash code so transformations don't touch them
   s = s.replace(/```[\s\S]*?```/g, (m) => stash(m));
-  // Inline code
   s = s.replace(/`[^`\n]*`/g, (m) => stash(m));
-  // Links: [label](url) -> <url|label>
+  // Links
   s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => `<${url}|${label}>`);
-  // Bold: **text** -> *text* (do this BEFORE single-asterisk italic so we
-  // don't accidentally turn ** into _ _)
+  // Bold-italic FIRST (more specific): ***X*** / ___X___ -> *_X_*
+  s = s.replace(/\*\*\*([^*\n]+?)\*\*\*/g, "*_$1_*");
+  s = s.replace(/___([^_\n]+?)___/g, "*_$1_*");
+  // Italic BEFORE bold so single * doesn't get mistaken for downgraded bold.
+  // Lookbehind/ahead avoids ** boundaries and inside-word matches.
+  s = s.replace(/(?<![*\w])\*([^*\n]+?)\*(?![*\w])/g, "_$1_");
+  // Bold: **X** / __X__ -> *X*
   s = s.replace(/\*\*([^*\n]+?)\*\*/g, "*$1*");
-  // Headings: '# X' / '## X' etc at line start -> '*X*'
+  s = s.replace(/__([^_\n]+?)__/g, "*$1*");
+  // Strikethrough: ~~X~~ -> ~X~
+  s = s.replace(/~~([^~\n]+?)~~/g, "~$1~");
+  // Headers LAST: '# X' / '## X' etc at line start -> '*X*'
   s = s.replace(/^#{1,6}\s+(.+?)$/gm, "*$1*");
   // Restore stashed code
   s = s.replace(/\x00STASH(\d+)\x00/g, (_m, i) => stashed[Number(i)] ?? "");
