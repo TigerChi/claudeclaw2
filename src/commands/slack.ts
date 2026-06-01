@@ -323,6 +323,40 @@ async function removeReaction(
   });
 }
 
+// --- Markdown → Slack mrkdwn conversion ---
+// Slack does NOT render standard markdown:
+//   `**bold**` -> shown literal, must be `*bold*` (single asterisk)
+//   `_italic_`  -> already correct
+//   `[label](url)` -> shown literal, must be `<url|label>`
+//   `# Header`  -> shown literal, no real headers, use `*Header*`
+//
+// Code blocks (``` … ```) and inline code (`x`) are preserved verbatim so
+// nothing inside gets re-translated.
+function markdownToSlackMrkdwn(text: string): string {
+  if (!text) return text;
+  // Stash code blocks & inline code so the conversion doesn't touch them.
+  const stashed: string[] = [];
+  const stash = (s: string): string => {
+    stashed.push(s);
+    return `\x00STASH${stashed.length - 1}\x00`;
+  };
+  let s = text;
+  // Fenced code blocks first (preserve whole block including ```)
+  s = s.replace(/```[\s\S]*?```/g, (m) => stash(m));
+  // Inline code
+  s = s.replace(/`[^`\n]*`/g, (m) => stash(m));
+  // Links: [label](url) -> <url|label>
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => `<${url}|${label}>`);
+  // Bold: **text** -> *text* (do this BEFORE single-asterisk italic so we
+  // don't accidentally turn ** into _ _)
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, "*$1*");
+  // Headings: '# X' / '## X' etc at line start -> '*X*'
+  s = s.replace(/^#{1,6}\s+(.+?)$/gm, "*$1*");
+  // Restore stashed code
+  s = s.replace(/\x00STASH(\d+)\x00/g, (_m, i) => stashed[Number(i)] ?? "");
+  return s;
+}
+
 // --- Message update (for streaming) ---
 
 async function updateMessage(
@@ -334,7 +368,7 @@ async function updateMessage(
   await slackApi(token, "chat.update", {
     channel: channelId,
     ts: messageTs,
-    text,
+    text: markdownToSlackMrkdwn(text),
   }).catch((err) => {
     debugLog(`chat.update failed: ${err instanceof Error ? err.message : err}`);
   });
@@ -361,7 +395,7 @@ async function postMessage(
 ): Promise<string | null> {
   const params: Record<string, unknown> = {
     channel: channelId,
-    text,
+    text: markdownToSlackMrkdwn(text),
   };
   if (threadTs) params.thread_ts = threadTs;
   const data = await slackApi<{ ts: string }>(token, "chat.postMessage", params).catch((err) => {
