@@ -9,6 +9,21 @@ import { transcribeAudioToText } from "../whisper";
 import { resolveSkillPrompt, listSkills } from "../skills";
 import { extname, join } from "node:path";
 
+// Telegram-specific directives prompt (loaded once)
+const TELEGRAM_DIRECTIVES_PATH = join(import.meta.dir, "..", "..", "prompts", "telegram", "DIRECTIVES.md");
+let telegramDirectivesPrompt: string | null = null;
+async function loadTelegramDirectives(): Promise<string> {
+  if (telegramDirectivesPrompt !== null) return telegramDirectivesPrompt;
+  try {
+    telegramDirectivesPrompt = existsSync(TELEGRAM_DIRECTIVES_PATH)
+      ? await Bun.file(TELEGRAM_DIRECTIVES_PATH).text()
+      : "";
+  } catch {
+    telegramDirectivesPrompt = "";
+  }
+  return telegramDirectivesPrompt;
+}
+
 // --- TEMP DIAGNOSTIC (2026-05-24): record TG spawn failures ---
 // Hypothesis: Eleven's session has 2098 turns / 21MB jsonl; resume fails fast
 // with exit 1 and empty stderr, so users see only "Error (exit 1): Unknown error".
@@ -904,6 +919,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     }
 
     const promptParts = [`[Telegram from ${label}]`];
+    const directives = await loadTelegramDirectives();
+    if (directives) promptParts.push(directives);
     if (threadId) promptParts.push(`[thread:${threadId}]`);
     if (skillContext) {
       // Strip the slash command from the message text and pass remaining args

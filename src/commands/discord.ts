@@ -11,6 +11,21 @@ import { resolveSkillPrompt } from "../skills";
 import { mkdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 
+// Discord-specific directives prompt (loaded once)
+const DISCORD_DIRECTIVES_PATH = join(import.meta.dir, "..", "..", "prompts", "discord", "DIRECTIVES.md");
+let discordDirectivesPrompt: string | null = null;
+async function loadDiscordDirectives(): Promise<string> {
+  if (discordDirectivesPrompt !== null) return discordDirectivesPrompt;
+  try {
+    discordDirectivesPrompt = existsSync(DISCORD_DIRECTIVES_PATH)
+      ? await Bun.file(DISCORD_DIRECTIVES_PATH).text()
+      : "";
+  } catch {
+    discordDirectivesPrompt = "";
+  }
+  return discordDirectivesPrompt;
+}
+
 // --- Discord API constants ---
 
 const DISCORD_API = "https://discord.com/api/v10";
@@ -634,6 +649,8 @@ async function handleMessageCreate(token: string, message: DiscordMessage): Prom
 
     // Build prompt (same pattern as Telegram)
     const promptParts = [`[Discord from ${label}]`];
+    const directives = await loadDiscordDirectives();
+    if (directives) promptParts.push(directives);
     if (skillContext) {
       const args = cleanContent.trim().slice(command!.length).trim();
       promptParts.push(`<command-name>${command}</command-name>`);

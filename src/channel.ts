@@ -434,7 +434,9 @@ export class Channel {
         security,
         projectDir,
       });
-      const cmdLine = args.map(shellQuote).join(" ");
+      // Mark daemon-spawned claude so the SessionStart hook skips re-injecting
+      // USAGE.md (already provided here via compose's --append-system-prompt).
+      const cmdLine = "CLAUDECLAW_DAEMON=1 " + args.map(shellQuote).join(" ");
       // v3 fix: sendKeys translates literal newlines into Enter keystrokes,
       // which broke our long multi-line --append-system-prompt by closing the
       // shell quote mid-string ("quote>" PS2 traps). pasteText goes via

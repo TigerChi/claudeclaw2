@@ -84,6 +84,24 @@ async function loadPrompts(): Promise<string> {
   return parts.join("\n\n");
 }
 
+/**
+ * ClaudeClaw capabilities/usage guide. Ships with the plugin in prompts/USAGE.md
+ * and is appended to every session's system prompt so any agent running as a
+ * daemon knows the in-conversation directives ([react:], [send-agent:], etc.),
+ * scheduling, session model, and platform limits without having to go read docs.
+ */
+async function loadUsage(): Promise<string> {
+  try {
+    const content = await readFile(join(PROMPTS_DIR, "USAGE.md"), "utf8");
+    return content.trim();
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      console.error("[compose] failed to read USAGE.md:", err);
+    }
+    return "";
+  }
+}
+
 export interface ComposeOptions {
   multiparty: boolean;
   security: SecurityConfig;
@@ -99,6 +117,8 @@ export async function composeAppendSystemPrompt(opts: ComposeOptions): Promise<s
     parts.push(dirScopePrompt(opts.projectDir ?? process.cwd()));
   }
   parts.push(CRON_JOBS_HINT);
+  const usage = await loadUsage();
+  if (usage) parts.push(usage);
   // v3: NO SILENT_REPLY_PROMPT — bot must always try to respond. Channel
   // filtering happens at the platform layer (e.g. slack requireMention).
   return parts.join("\n\n");
