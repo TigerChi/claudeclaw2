@@ -189,6 +189,17 @@ export interface SecurityConfig {
   disallowedTools: string[];
 }
 
+/** v3: session cleanup config (consumed by runner-shim). Optional. */
+export interface SessionCleanupConfig {
+  /** Idle channels older than this get their tmux torn down. Default 168. */
+  idleTimeoutHours?: number;
+  /** Cleanup tick interval. Default 30. */
+  checkIntervalMinutes?: number;
+  /** When the agent's claude RSS total exceeds this, evict oldest idle
+   *  channels until under cap. 0 = disabled. */
+  maxMemoryMb?: number;
+}
+
 export interface Settings {
   model: string;
   api: string;
@@ -206,6 +217,7 @@ export interface Settings {
   stt: SttConfig;
   whisper: WhisperConfig;
   agentBus: AgentBusConfig;
+  sessionCleanup?: SessionCleanupConfig;
 }
 
 export interface AgenticMode {
@@ -373,6 +385,13 @@ function parseSettings(raw: Record<string, any>, _extractedDiscordUserIds?: stri
 
   const parsedTimezone = parseTimezone(raw.timezone);
 
+  // v3: pass through sessionCleanup as an unknown blob — runner-shim reads it
+  // via `(settings as any).sessionCleanup`. Not added to the Settings type yet
+  // because v1 callers don't use it.
+  const sessionCleanup = raw.sessionCleanup && typeof raw.sessionCleanup === "object"
+    ? raw.sessionCleanup
+    : undefined;
+
   return {
     model: typeof raw.model === "string" ? raw.model.trim() : "",
     api: typeof raw.api === "string" ? raw.api.trim() : "",
@@ -381,6 +400,7 @@ function parseSettings(raw: Record<string, any>, _extractedDiscordUserIds?: stri
       api: typeof raw.fallback?.api === "string" ? raw.fallback.api.trim() : "",
     },
     agentic: parseAgenticConfig(raw.agentic),
+    sessionCleanup,
     timezone: parsedTimezone,
     timezoneOffsetMinutes: parseTimezoneOffsetMinutes(raw.timezoneOffsetMinutes, parsedTimezone),
     heartbeat: {
