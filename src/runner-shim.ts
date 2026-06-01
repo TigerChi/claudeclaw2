@@ -23,7 +23,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { Channel, type ChannelCallbacks, type ReplyTarget } from "./channel";
-import { loadSessions, saveSessions, tmuxNameFor, type ChannelSession, type ChannelKind } from "./channel-sessions";
+import { loadSessions, saveSessions, tmuxNameFor, touchActivity, type ChannelSession, type ChannelKind } from "./channel-sessions";
 import type { Settings } from "./config";
 import { hasSession } from "./tmux";
 import { reportAndClearLeftoverInflight } from "./inflight-store";
@@ -44,11 +44,77 @@ export function initRunnerShim(ctx: ShimContext): void {
   void reportAndClearLeftoverInflight().catch((err) =>
     console.error("[runner-shim] inflight startup check failed:", err)
   );
+  startSessionCleanup();
 }
 
 // Re-export inflight helpers so platform handlers can wrap their
 // runUserMessage / streamUserMessage calls without importing both modules.
 export { trackInflight, untrackInflight } from "./inflight-store";
+
+// ---------- session cleanup (idle channel teardown) ----------
+
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Periodically tear down tmux sessions whose channel has been idle past
+ * `settings.sessionCleanup.idleTimeoutHours`. channel-sessions.json entry
+ * STAYS — the next inbound message will spawn a fresh tmux and call
+ * `claude --resume <sessionId>`, restoring full conversation context.
+ *
+ * Ported from hans's daemon.ts:298 (claudeclaw2 upstream). Config defaults
+ * match hans's init: 168h timeout, 30min check interval. Set
+ * `idleTimeoutHours: 0` in settings to disable.
+ */
+function startSessionCleanup(): void {
+  if (!context) return;
+  const cfg: any = (context.settings as any).sessionCleanup ?? {};
+  const idleHours = typeof cfg.idleTimeoutHours === "number" ? cfg.idleTimeoutHours : 168;
+  const checkMin = typeof cfg.checkIntervalMinutes === "number" ? cfg.checkIntervalMinutes : 30;
+  if (idleHours <= 0 || checkMin <= 0) {
+    console.log("[runner-shim] session cleanup disabled (idleTimeoutHours or checkIntervalMinutes <= 0)");
+    return;
+  }
+  if (cleanupTimer) clearInterval(cleanupTimer);
+  // Run once on start to catch sessions that were already idle when we
+  // booted, then on the configured interval.
+  void cleanupIdleSessions(idleHours);
+  cleanupTimer = setInterval(() => void cleanupIdleSessions(idleHours), checkMin * 60_000);
+  console.log(
+    `[runner-shim] session cleanup: idleTimeout=${idleHours}h, check every ${checkMin}m`,
+  );
+}
+
+async function cleanupIdleSessions(idleHours: number): Promise<void> {
+  const timeoutMs = idleHours * 3_600_000;
+  if (timeoutMs <= 0) return;
+  const now = Date.now();
+  const persisted = await loadSessions();
+  const candidates: Array<{ key: string; ageH: number }> = [];
+  for (const [key, entry] of channels.entries()) {
+    if (entry.channel.currentState !== "idle") continue;
+    const session = persisted[key];
+    if (!session) continue;
+    const lastTs = Date.parse(session.lastActivityAt);
+    if (!Number.isFinite(lastTs)) continue;
+    const age = now - lastTs;
+    if (age >= timeoutMs) candidates.push({ key, ageH: Math.round(age / 3_600_000) });
+  }
+  if (candidates.length === 0) return;
+  console.log(`[runner-shim] cleaning up ${candidates.length} idle channel(s)`);
+  for (const { key, ageH } of candidates) {
+    const entry = channels.get(key);
+    if (!entry) continue;
+    console.log(
+      `[runner-shim]   ${key} idle for ${ageH}h → killing tmux (session entry preserved for resume)`,
+    );
+    try {
+      await entry.channel.shutdown();
+    } catch (err) {
+      console.error(`[runner-shim] cleanup ${key}:`, err);
+    }
+    channels.delete(key);
+  }
+}
 
 function getCtx(): ShimContext {
   if (!context) {
@@ -280,6 +346,9 @@ async function withChannel<T>(threadId: string | undefined, fn: (entry: ChannelE
   const key = threadIdToChannelKey(threadId);
   console.log(`[runner-shim] withChannel threadId=${threadId} key=${key}`);
   const entry = await ensureChannel(key);
+  // Refresh lastActivityAt so the cleanup scheduler doesn't treat a recently
+  // used channel as idle. Fire-and-forget — write failure shouldn't block.
+  void touchActivity(key).catch(() => {});
   const prev = entry.busy;
   const next = prev.catch(() => {}).then(() => {
     console.log(`[runner-shim] fn-start key=${key}`);
