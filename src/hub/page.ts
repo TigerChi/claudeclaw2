@@ -454,7 +454,7 @@ export function hubPage(): string {
       } else {
         for (const a of agents) {
           const name = (a.path || "").split("/").filter(Boolean).pop() || a.path;
-          // Tag the daemon's plugin source; v3 (tmux engine) stands out vs
+          // Tag the daemon's plugin source; v2 (tmux engine) stands out vs
           // v1 default so it's obvious which agents have migrated.
           const version = a.version || "v1";
           const vBadge =
