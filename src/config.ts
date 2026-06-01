@@ -215,10 +215,30 @@ export interface AgenticMode {
   phrases?: string[];
 }
 
+/** v3: gates that suppress model flip-flopping (ported from hans). All
+ *  optional with sane defaults; channel.ts handles missing values. */
+export interface AgenticHysteresis {
+  confidenceThreshold: number;
+  scoreMargin: number;
+  stickyWindowMinutes: number;
+  stickyWindowTurns: number;
+}
+
 export interface AgenticConfig {
   enabled: boolean;
   defaultMode: string;
   modes: AgenticMode[];
+  hysteresis?: AgenticHysteresis;
+}
+
+/** v3: busy-channel queue behaviour (ported from hans). Optional. */
+export type QueueMode = "queue" | "interrupt";
+export type QueueDropPolicy = "old" | "new" | "summarize";
+export interface QueueConfig {
+  mode: QueueMode;
+  debounceMs: number;
+  cap: number;
+  dropPolicy: QueueDropPolicy;
 }
 
 export interface ModelConfig {
@@ -344,7 +364,7 @@ function parseAgenticConfig(raw: any): AgenticConfig {
   };
 }
 
-function parseSettings(raw: Record<string, any>): Settings {
+function parseSettings(raw: Record<string, any>, _extractedDiscordUserIds?: string[]): Settings {
   const rawLevel = raw.security?.level;
   const level: SecurityLevel =
     typeof rawLevel === "string" && VALID_LEVELS.has(rawLevel as SecurityLevel)

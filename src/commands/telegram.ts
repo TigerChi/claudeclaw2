@@ -1,4 +1,4 @@
-import { ensureProjectClaudeMd, run, runUserMessage, compactCurrentSession, cancelThread } from "../runner";
+import { ensureProjectClaudeMd, run, runUserMessage, compactCurrentSession, cancelThread } from "../runner-shim";
 import { CANCEL_CONFIRM_MESSAGE, CANCEL_NOTHING_MESSAGE } from "../cancel";
 import { addTelegramAllowedUser, getSettings, loadSettings } from "../config";
 import { resetSession, peekSession } from "../sessions";

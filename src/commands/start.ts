@@ -2,7 +2,7 @@ import { writeFile, unlink, mkdir } from "fs/promises";
 import { openSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { run, runUserMessage, streamUserMessage, bootstrap, ensureProjectClaudeMd, loadHeartbeatPromptTemplate } from "../runner";
+import { run, runUserMessage, streamUserMessage, bootstrap, ensureProjectClaudeMd, loadHeartbeatPromptTemplate } from "../runner-shim";
 import { writeState, type StateData } from "../statusline";
 import { cronMatches, nextCronMatch } from "../cron";
 import { clearJobSchedule, loadJobs } from "../jobs";
@@ -375,6 +375,10 @@ export async function start(args: string[] = []) {
 
   await initConfig();
   const settings = await loadSettings();
+  // v3: initialize runner-shim with the loaded settings + project dir so
+  // the Channel engine can spawn claude inside tmux with the right context.
+  const { initRunnerShim } = await import("../runner-shim");
+  initRunnerShim({ settings, projectDir: process.cwd() });
   await ensureProjectClaudeMd();
   const jobs = await loadJobs();
   const webEnabled = webFlag || webPortFlag !== null || settings.web.enabled;

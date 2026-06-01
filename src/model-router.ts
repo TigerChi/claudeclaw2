@@ -101,16 +101,38 @@ export function classifyTask(
 
 /**
  * Select the appropriate model based on task classification.
+ *
+ * v3: extended to also return hans-style fields (mode/confidence/scores)
+ * so hans's channel.ts hysteresis path can read them without a separate
+ * shim. taskType is preserved for back-compat with v1 callers.
  */
 export function selectModel(
   prompt: string,
   modes: AgenticMode[],
   defaultMode: string,
-): { model: string; taskType: string; reasoning: string } {
+): {
+  model: string;
+  taskType: string;
+  reasoning: string;
+  mode: string;
+  confidence: number;
+  scores: { mode: string; score: number }[];
+} {
   const classification = classifyTask(prompt, modes, defaultMode);
+  // Re-derive per-mode scores for hans's margin check. Cheap: same loop as
+  // classifyTask phase 2; the redundancy isn't worth a refactor.
+  const normalized = prompt.toLowerCase().trim();
+  const scores = modes.map((m) => {
+    let score = 0;
+    for (const k of m.keywords) if (normalized.includes(k)) score++;
+    return { mode: m.name, score };
+  });
   return {
     model: classification.model,
     taskType: classification.mode,
     reasoning: classification.reasoning,
+    mode: classification.mode,
+    confidence: classification.confidence,
+    scores,
   };
 }

@@ -1,4 +1,4 @@
-import { ensurePathEntries } from "./agent-env";
+import { ensurePathEntries, loadAgentEnv } from "./agent-env";
 
 // When the hub is launched by launchd / systemd, it inherits a minimal
 // PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Daemons spawned by the hub
@@ -6,6 +6,16 @@ import { ensurePathEntries } from "./agent-env";
 // `node`, `ffmpeg`, etc. when shelling out. Backfill at entry so every
 // downstream spawn sees a usable PATH.
 process.env.PATH = ensurePathEntries(process.env.PATH);
+
+// v3 difference: the engine spawns `claude` inside long-lived tmux sessions.
+// tmux inherits the daemon's env, so per-agent secrets (ANTHROPIC_AUTH_TOKEN,
+// OP_SERVICE_ACCOUNT_TOKEN, base URL overrides) must be loaded into
+// process.env at the daemon entry point — not per-call like v1 did. Each
+// daemon is single-agent, so locking env to startup state is safe.
+{
+  const overrides = loadAgentEnv(process.cwd());
+  for (const [k, v] of Object.entries(overrides)) process.env[k] = v;
+}
 
 import { start } from "./commands/start";
 import { stop, stopAll, restart } from "./commands/stop";

@@ -1,4 +1,4 @@
-import { runUserMessage } from "../runner";
+import { runUserMessage } from "../runner-shim";
 import { getSession } from "../sessions";
 import { loadSettings, initConfig } from "../config";
 

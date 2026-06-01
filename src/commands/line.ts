@@ -1,4 +1,4 @@
-import { ensureProjectClaudeMd, runUserMessage, cancelThread } from "../runner";
+import { ensureProjectClaudeMd, runUserMessage, cancelThread } from "../runner-shim";
 import { isCancelCommand, CANCEL_CONFIRM_MESSAGE, CANCEL_NOTHING_MESSAGE } from "../cancel";
 import { addLineAllowedUser, getSettings, loadSettings } from "../config";
 import { peekThreadSession } from "../sessionManager";
