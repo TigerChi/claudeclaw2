@@ -678,10 +678,12 @@ export class Channel {
     this.lastStreamPartial = "";
     this.gotRealAssistantText = false;
     const tick = async () => {
+      // Note: currentTurnReplyTo can be null when called via runner-shim —
+      // shim collects text through onChunk and returns to platform handlers
+      // rather than having Channel post directly. So we don't gate on it.
       const target = this.currentTurnReplyTo;
-      if (!target) return;
       if (this.state !== "running") return;
-      if (this.gotRealAssistantText) return; // JSONL took over
+      if (this.gotRealAssistantText) return;
       let pane: string;
       try {
         pane = await capturePane(this.opts.session.tmuxSession);
