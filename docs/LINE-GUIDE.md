@@ -36,9 +36,9 @@ ngrok（公開 URL → localhost）
   ▼
 LINE Webhook Proxy（:18789，共用，按 path 分流）
   │
-  ├─ /line/felix  → Agent Felix daemon (:18801)
-  ├─ /line/eleven → Agent Eleven daemon (:18802)
-  └─ /line/beo    → Agent Beo daemon (:18803)
+  ├─ /line/agent-a → Agent A daemon (:18801)
+  ├─ /line/agent-b → Agent B daemon (:18802)
+  └─ /line/agent-c → Agent C daemon (:18803)
                        │
                        ▼
                     Claude Code session
@@ -73,7 +73,7 @@ LINE Webhook Proxy（:18789，共用，按 path 分流）
 
 在 LINE Developers Console → Messaging API：
 - **Webhook URL**: `https://<你的公開 URL>/<webhookPath>`
-  例如：`https://xxx.ngrok-free.dev/line/felix`
+  例如：`https://xxx.ngrok-free.dev/line/agent-a`
 - **Use webhook**: 開啟
 - **Auto-reply messages**: 關閉（不然 LINE 官方自動回覆會干擾 bot）
 
@@ -125,7 +125,7 @@ ngrok http 18789
 
     // === Webhook 設定 ===
     "webhookPort": 18801,             // 本機內部 port（每個 Agent 要不同）
-    "webhookPath": "/line/felix"      // Webhook 路徑（每個 Agent 要不同）
+    "webhookPath": "/line/agent-a"    // Webhook 路徑（每個 Agent 要不同）
   }
 }
 ```
@@ -183,9 +183,9 @@ Proxy 設定檔：`~/.claude/claudeclaw/proxy-config.json`
 | Agent | webhookPort | webhookPath |
 |---|---|---|
 | Proxy（對外） | 18789 | — |
-| Felix | 18801 | /line/felix |
-| Eleven | 18802 | /line/eleven |
-| Beo | 18808 | /line/beo |
+| Agent A | 18801 | /line/agent-a |
+| Agent B | 18802 | /line/agent-b |
+| Agent C | 18808 | /line/agent-c |
 
 ### 4.4 Proxy 指令
 
@@ -349,7 +349,7 @@ DM 不受 mention 政策影響。只要通過使用者授權（allowedUserIds / 
 
 群組訊息進來時，daemon log 會印出 group ID：
 ```
-[13:05] Line 戚禎庭(U708a...) in group C8035...: "hello"
+[13:05] Line <displayName>(U<userId32hex>) in group C<groupId32hex>: "hello"
 ```
 
 `C8035...` 就是 group ID，可以加到 `groups` 設定裡。
@@ -369,7 +369,7 @@ DM 不受 mention 政策影響。只要通過使用者授權（allowedUserIds / 
 ### 8.2 白名單模式
 
 ```jsonc
-"allowedUserIds": ["U708a61e8a1227945158a4c4920b4e15a"]
+"allowedUserIds": ["Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
 ```
 
 只有列出的 user ID 能使用 bot。其他人的訊息完全被忽略。
@@ -395,7 +395,7 @@ DM 不受 mention 政策影響。只要通過使用者授權（allowedUserIds / 
 ### 8.4 如何取得 User ID
 
 使用者的 LINE user ID 會在以下場合出現：
-- Daemon log：`Line 戚禎庭(U708a61e8...) in DM: "hello"`
+- Daemon log：`Line <displayName>(U<userId>...) in DM: "hello"`
 - Pairing 成功時自動寫入 settings.json
 - 無法從 LINE app 介面直接查看（需要透過 bot 互動取得）
 
@@ -576,8 +576,9 @@ Hot-reload 生效。已配對的使用者不受影響（他們已在 allowedUser
 | 檔案 | 位置 | 用途 |
 |---|---|---|
 | Agent 設定 | `<Agent>/.claude/claudeclaw/settings.json` | LINE token、安全設定等 |
-| Claude Session | `<Agent>/.claude/claudeclaw/session.json` | Agent 的對話記憶 |
-| Thread Sessions | `<Agent>/.claude/claudeclaw/sessions.json` | 各 thread 的對話記憶 |
+| Channel Sessions（v2 authoritative） | `<Agent>/.claude/claudeclaw/channel-sessions.json` | 每個 channel 的 session metadata |
+| 舊版 Thread Sessions（v1 legacy，v2 不寫入） | `<Agent>/.claude/claudeclaw/sessions.json` | 過渡期保留，可不存在 |
+| Inflight | `<Agent>/.claude/claudeclaw/inflight.json` | 進行中的回覆追蹤（目前限 Slack） |
 | 執行日誌 | `<Agent>/.claude/claudeclaw/logs/` | 每次 LINE 訊息處理的日誌 |
 | 收到的媒體 | `<Agent>/.claude/claudeclaw/inbox/line/` | 下載的圖片、語音、檔案 |
 | Cron Jobs | `<Agent>/.claude/claudeclaw/jobs/` | 排程工作 |

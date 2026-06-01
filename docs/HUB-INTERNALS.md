@@ -52,15 +52,22 @@ Each daemon now records its own real `process.cwd()` at start in
 
 ```json
 {
-  "path": "/Users/x/Claude Workspace/Agent-CooBot",
+  "path": "/Users/x/Claude Workspace/agent-a",
   "pid": 45924,
-  "startedAt": 1777105635065
+  "startedAt": 1777105635065,
+  "version": "v2"
 }
 ```
 
 Hub and `stopAll` read this directory directly — no decoding needed, no path
 ambiguity. Same hash function (`agentIdForPath`) is the agent ID exposed to
 the SPA, so `<id>` in URLs is stable as long as the path is.
+
+The `version` field was added during the v1→v2 engine rework. v2 daemons
+write `"v2"`; entries written by older daemons (or any whose JSON predates
+the field) read back as `undefined`, and the SPA renders the corresponding
+badge as `"v1"`. The field is informational only — lifecycle endpoints do
+not branch on it.
 
 ### Lifecycle
 

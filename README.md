@@ -7,17 +7,17 @@
 
 <p align="center">
   <img src="https://awesome.re/badge.svg" alt="Awesome" />
-  <a href="https://github.com/TigerChi/claudeclaw/stargazers">
-    <img src="https://img.shields.io/github/stars/TigerChi/claudeclaw?style=flat-square&color=f59e0b" alt="GitHub Stars" />
+  <a href="https://github.com/<your-username>/claudeclaw2/stargazers">
+    <img src="https://img.shields.io/github/stars/<your-username>/claudeclaw2?style=flat-square&color=f59e0b" alt="GitHub Stars" />
   </a>
-  <a href="https://github.com/TigerChi/claudeclaw">
+  <a href="https://github.com/<your-username>/claudeclaw2">
     <img src="https://img.shields.io/badge/downloads-~10k-2da44e?style=flat-square" alt="Downloads ~10k" />
   </a>
-  <a href="https://github.com/TigerChi/claudeclaw/commits/master">
-    <img src="https://img.shields.io/github/last-commit/TigerChi/claudeclaw?style=flat-square&color=0ea5e9" alt="Last Commit" />
+  <a href="https://github.com/<your-username>/claudeclaw2/commits/master">
+    <img src="https://img.shields.io/github/last-commit/<your-username>/claudeclaw2?style=flat-square&color=0ea5e9" alt="Last Commit" />
   </a>
-  <a href="https://github.com/TigerChi/claudeclaw/graphs/contributors">
-    <img src="https://img.shields.io/github/contributors/TigerChi/claudeclaw?style=flat-square&color=a855f7" alt="Contributors" />
+  <a href="https://github.com/<your-username>/claudeclaw2/graphs/contributors">
+    <img src="https://img.shields.io/github/contributors/<your-username>/claudeclaw2?style=flat-square&color=a855f7" alt="Contributors" />
   </a>
   <a href="https://x.com/moazbuilds">
     <img src="https://img.shields.io/badge/X-%40moazbuilds-000000?style=flat-square&logo=x" alt="X @moazbuilds" />
@@ -89,14 +89,13 @@ For commands you can send to the bot from inside a chat (`/cancel` to stop the c
 
 For the voice transcription pipeline — engine selection (MLX on Apple Silicon, whisper.cpp fallback, external STT API), model choice, two-tier vocabulary biasing, and where to edit which file — see [docs/WHISPER-GUIDE.md](docs/WHISPER-GUIDE.md).
 
-### Multi-Session Threads (Discord)
-- **Independent Thread Sessions:** Each Discord thread gets its own Claude CLI session, fully isolated from the main channel.
-- **Parallel Processing:** Thread conversations run concurrently — messages in different threads don't block each other.
-- **Auto-Create:** First message in a new thread automatically bootstraps a fresh session. No setup needed.
-- **Session Cleanup:** Thread sessions are automatically cleaned up when threads are deleted or archived.
-- **Backward Compatible:** DMs and main channel messages continue using the global session.
+### Multi-Session Channels
+- **Per-channel isolated sessions** for Slack threads, LINE groups/rooms, and Discord threads. Each gets its own `claude` TUI inside a dedicated tmux session.
+- **Parallel.** Different channels run concurrently; messages within one channel are serialised.
+- **Resume after eviction.** Idle channels are torn down on schedule; the next inbound message respawns the session and replays the JSONL transcript.
+- **`global` session** handles DMs (Slack/LINE), the Discord main channel, all Telegram messages, and any other inbound that doesn't carry a per-channel key.
 
-See [docs/MULTI_SESSION.md](docs/MULTI_SESSION.md) for technical details.
+See [docs/MULTI_SESSION.md](docs/MULTI_SESSION.md) for the engine and [docs/AGENT-CONFIG.md § sessionCleanup](docs/AGENT-CONFIG.md#sessioncleanup) for the cleanup policy.
 
 ### Reliability and Control
 - **GLM Fallback:** Automatically continue with GLM models if your primary limit is reached.

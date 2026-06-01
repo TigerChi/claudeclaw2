@@ -159,7 +159,7 @@ ClaudeClaw 用兩層提升轉錄正確性：
 詞彙。實際送出的字串長這樣：
 
 ```
-以下內容可能包含以下常用詞彙：Tiger、王小明、ClaudeClaw、Felix、Eleven、...。
+以下內容可能包含以下常用詞彙：張三、李四、ClaudeClaw、agent-a、agent-b、...。
 ```
 
 各 engine 接收方式：
@@ -179,7 +179,7 @@ ClaudeClaw 用兩層提升轉錄正確性：
 
 ```
 agent 常用詞參考（轉錄結果若有怪字，請優先用同音相符的下列詞替換）：
-Tiger、王小明、ClaudeClaw、Felix、Eleven、...
+張三、李四、ClaudeClaw、agent-a、agent-b、...
 ```
 
 Claude 看到怪字可自己用同音聯想對回詞表。零額外 LLM call。
@@ -201,8 +201,8 @@ Claude 看到怪字可自己用同音聯想對回詞表。零額外 LLM call。
 
 放這裡的詞所有 agent 都會自動讀到。建議只放：
 
-- 跨 agent 都會講到的人名（Tiger、王小明）
-- 自家組織 / 系統名（ClaudeClaw、TigerAgentKit）
+- 跨 agent 都會講到的人名（例：張三、李四）
+- 自家組織 / 系統名（如 ClaudeClaw 自己、其他長期會出現的工具集名）
 
 **不要**放場景特化的詞（醫療術語、某 agent 內部術語等）— 會佔用全域 244 token
 配額，影響其他場景。
@@ -213,9 +213,9 @@ Claude 看到怪字可自己用同音聯想對回詞表。零額外 LLM call。
 
 各 agent 自己的專有詞彙。例如：
 
-- Felix：醫療人名 / 藥物 / 治療術語
-- Eleven：家庭成員 / 食物 / 居家用品
-- Dev：開發術語 / 其他 agent 名
+- 醫療場景 agent：人名 / 藥物 / 治療術語
+- 家庭場景 agent：家庭成員 / 食物 / 居家用品
+- 開發場景 agent：開發術語 / 其他 agent 名
 
 ### 格式
 
@@ -223,7 +223,7 @@ Claude 看到怪字可自己用同音聯想對回詞表。零額外 LLM call。
 # 註解（# 開頭，不會進 prompt）
 # 一行一詞 或用逗號 / 中文逗號分隔
 
-Tiger, 王小明
+張三, 李四
 ClaudeClaw
 agent-bus
 ```

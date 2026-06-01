@@ -1,168 +1,119 @@
-# Per-Agent Settings — `<projectDir>/.claude/claudeclaw/settings.json`
+# Per-Agent Settings
 
-Each agent (eleven, dev, felix, …) owns a `settings.json` that drives **its**
-daemon's behaviour. The hub config (`~/.claude/claudeclaw/hub/config.json`,
-see [HUB-CONFIG.md](HUB-CONFIG.md)) is separate — it governs the multi-agent
-hub itself, not individual agents.
+Per-agent configuration lives in `<projectDir>/.claude/claudeclaw/settings.json`.
+Each agent's daemon reads this file. The hub config
+(`~/.claude/claudeclaw/hub/config.json`, see [HUB-CONFIG.md](HUB-CONFIG.md))
+is a separate file governing the hub itself, not individual agents.
 
 ## File
 
-| Path | `<projectDir>/.claude/claudeclaw/settings.json` |
+| | |
 |---|---|
+| Path | `<projectDir>/.claude/claudeclaw/settings.json` |
 | Format | JSON |
-| Permissions | `0600` (owner-only) |
+| Permissions | `0600` |
 | Created by | `claudeclaw init` |
-| Reload | Most fields require daemon restart. `agentic` + `timezone` are hot-reloaded via the `watching settings.json` mechanism (see `daemon` log) |
-| Validate | `jq . settings.json` after edits |
+| Validation | `jq . settings.json` |
+| Reload | Most fields require daemon restart. `agentic` and `timezone` hot-reload via the `watching settings.json` mechanism (visible in `daemon` log). |
 
-Unrecognised top-level fields are silently ignored. Recognised fields with
-malformed shape fall back to their default (no hard error).
+Unknown top-level fields are ignored. Recognised fields with malformed
+shape fall back to defaults; no hard error.
 
-## Top-level Schema
+## Sibling state files
+
+The v2 daemon reads and writes additional state in the same directory:
+
+| File | Engine | Role |
+|---|---|---|
+| `channel-sessions.json` | v2 | Per-channel session metadata. Authoritative; written on every turn. |
+| `sessions.json` | v1 | Legacy schema. Read by a small set of v1-era commands but **not** written by the v2 engine. |
+| `inflight.json` | v2 | Active reply markers (currently Slack). Cleared on turn completion. Leftover entries are logged at daemon startup. |
+
+## Top-level fields
 
 | Field | Type | Purpose |
 |---|---|---|
-| `model` | `string` | Default `--model` for `claude` spawn (empty = Claude Code default) |
-| `agentic` | object | Per-turn agentic model routing (hot-reload) |
-| `timezone` | `string` | e.g. `"+08:00"` — used for prompt prefix timestamp (hot-reload) |
-| `heartbeat` | object | Periodic self-prompt scheduler |
-| `telegram` / `discord` / `slack` / `line` | object | Platform connectors |
-| `security` | object | Tool allowlist / disallowlist + scope level |
-| `web` | object | Per-agent web UI host/port |
-| `approval` | object | TUI permission-dialog routing |
-| `sessionCleanup` | object | Idle-channel teardown (see below) ⭐ |
+| `model` | string | Default `--model` for `claude` spawn. Empty = Claude Code default. |
+| `agentic` | object | Per-turn model routing (hot-reload). |
+| `timezone` | string | e.g. `"+08:00"`. Used in prompt prefix timestamp (hot-reload). |
+| `heartbeat` | object | Periodic self-prompt scheduler. |
+| `telegram` / `discord` / `slack` / `line` | object | Platform connectors. |
+| `security` | object | Tool allow/disallow + scope level. |
+| `web` | object | Per-agent web UI host/port. |
+| `approval` | object | TUI permission dialog routing. |
+| `sessionCleanup` | object | Channel garbage collection (see below). |
 
----
+Platform/feature blocks are documented elsewhere:
 
-## `sessionCleanup` — channel garbage collection
+- `telegram` / `discord` / `slack` / `line` — [Channel_Guide.md](Channel_Guide.md); platform directives under `prompts/<platform>/DIRECTIVES.md`
+- `line` setup — [LINE-GUIDE.md](LINE-GUIDE.md)
+- `whisper` — [WHISPER-GUIDE.md](WHISPER-GUIDE.md)
+- `agentBus` — [AGENT-BUS.md](AGENT-BUS.md)
+- Multi-channel session model — [MULTI_SESSION.md](MULTI_SESSION.md)
+- `agentic` / `security` / `approval` — inline `"//"` comments in the JSON template (`src/init.ts`)
+
+## `sessionCleanup`
 
 ```json
 "sessionCleanup": {
   "idleTimeoutHours": 168,
   "checkIntervalMinutes": 30,
-  "maxMemoryMb": 3000
+  "maxMemoryMb": 0
 }
 ```
 
-**Why this exists.** Every Slack thread / Telegram chat / LINE group becomes
-its own `claude` TUI inside its own tmux session. Without cleanup these
-accumulate — a single `claude` is ~200-500 MB RSS, so 30 active channels
-≈ 6-15 GB resident. The cleaner periodically tears down idle channels.
-
-**The `channel-sessions.json` entry survives the cleanup.** Next inbound
-message to that channel respawns tmux and runs `claude --resume <sessionId>`
-— full conversation history reconstructed from the JSONL file. So eviction
-is **not** data loss; it's just a tmux+claude RAM reclaim.
-
-### Fields
-
-| Field | Default | Meaning |
+| Field | Default | Behaviour |
 |---|---|---|
-| `idleTimeoutHours` | `168` (1 week) | Channels idle past this → tmux killed |
-| `checkIntervalMinutes` | `30` | Cleaner tick cadence |
-| `maxMemoryMb` | `0` (disabled) | RSS cap; when total `claude` RSS for this agent exceeds → evict oldest idle channel(s) until under cap |
+| `idleTimeoutHours` | `168` | Channels idle past this → tmux killed. `0` disables. |
+| `checkIntervalMinutes` | `30` | Cleaner tick cadence. `0` disables the scheduler. |
+| `maxMemoryMb` | `0` | RSS cap. `0` disables memory-cap eviction. |
 
-### Two cleanup policies — independent, both run each tick
+Eviction kills the tmux process only. The `channel-sessions.json` entry
+stays intact. The next inbound message to that channel respawns tmux with
+`claude --resume <sessionId>` — JSONL replay restores conversation state.
+First message after eviction takes ~5–10s extra (tmux startup + replay).
 
-**1. Idle-timeout** (steady state)
-```
-For each idle channel:
-  if (now − lastActivityAt) ≥ idleTimeoutHours:
-    shutdown channel  (kill tmux; channel-sessions entry stays)
-```
-Good for low-frequency steady-state use — old conversations naturally
-clear out after a week.
+### Policies
 
-**2. Memory-cap LRU** (burst protection)
+Both policies run on each cleaner tick, independently.
+
 ```
-total = sum(RSS) of `claude` processes whose --append-system-prompt
-        contains this agent's projectDir
+# 1. Idle timeout
+for each channel:
+  if (now - lastActivityAt) >= idleTimeoutHours:
+    shutdown(channel)
+```
+
+```
+# 2. Memory-cap LRU
+total = sum(RSS) of claude processes whose
+        --append-system-prompt contains projectDir
 while total > maxMemoryMb:
   oldest = idle channel with smallest lastActivityAt
-  if !oldest: break (everything busy — can't evict)
-  shutdown oldest
-  total = recompute
-```
-Solves the burst-load failure mode: if you spawn 50 threads in one day,
-they all stay alive for 168h with idle policy alone. Memory cap evicts
-oldest idle as soon as total RSS crosses the threshold.
-
-**Cross-agent isolation**: Memory measurement filters `ps` output by
-`projectDir` (each `claude` has the dir baked into its `--append-system-prompt`),
-so one agent doesn't measure another's processes.
-
-### Disabling
-
-- `idleTimeoutHours: 0` — disable timeout-based eviction
-- `maxMemoryMb: 0` (default) — disable memory-cap eviction
-- Both 0 — cleanup scheduler doesn't even start (log line: `session cleanup disabled`)
-- `checkIntervalMinutes: 0` — also disables (regardless of the others)
-
-### Recommended values
-
-| Agent profile | `maxMemoryMb` | Reason |
-|---|---|---|
-| Heavy user (dev, felix) | `3000` | Plenty of headroom, evicts ~7-15 channels worth before kicking in |
-| Light user (chifa, beo) | `1500` | Modest RSS, frees memory for the rest of the box |
-| Voice/family (eleven) | `2000` | Whisper backend keeps an extra process per turn |
-| Single-channel only | leave at `0` | Cleanup not really needed; idle timeout handles it |
-
-### Log lines to confirm it's wired
-
-On daemon start:
-```
-[runner-shim] session cleanup: idleTimeout=168h, maxMemoryMb=3000, check every 30m
+  if !oldest: break    // everything busy
+  shutdown(oldest)
+  total = recompute()
 ```
 
-On eviction:
-```
-[runner-shim] cleaning up N idle channel(s)
-[runner-shim]   evict slack:C…:1780… (idle 192h) — killing tmux, session entry preserved
-```
+Memory measurement filters `ps` output by `projectDir` (baked into each
+spawn's `--append-system-prompt`), so an agent sees only its own `claude`
+processes.
 
-Or for memory-driven:
-```
-[runner-shim] memory 3120MB > 3000MB cap → evicting LRU channel slack:C…:… (idle 47m)
-[runner-shim]   evict slack:C…:… (LRU memory cap) — killing tmux, session entry preserved
-```
+### Log lines
 
-### Resume after eviction
-
-Once cleanup has killed the tmux:
-
+Startup:
 ```
-[Slack] message arrives in evicted channel
-  ↓
-runner-shim.ensureChannel(key)
-  ↓ tmux dead (hasSession=false) + channel-sessions entry exists
-  ↓ resume = true
-  ↓ channel.start({ resume: true })
-  ↓ new tmux + `claude --resume <sessionId>`
-  ↓ claude reads JSONL, restores conversation
-  ↓ user's message processed in restored context
+[runner-shim] session cleanup: idleTimeout=<h>h, maxMemoryMb=<MB>, check every <m>m
 ```
 
-User-visible difference: **first message after eviction is slightly slower**
-(claude TUI startup + jsonl replay), about 5–10 seconds. Subsequent messages
-behave normally.
+Idle eviction:
+```
+[runner-shim] cleaning up <n> idle channel(s)
+[runner-shim]   evict <channelKey> (idle <h>h) — killing tmux, session entry preserved
+```
 
----
-
-## Other sections (briefly)
-
-The remaining top-level fields are platform/feature scoped — they each have
-their own guide:
-
-- **telegram / discord / slack / line** — see [Channel_Guide.md](Channel_Guide.md) for shared concepts and platform-specific quirks
-- **slack** — full directive vocabulary in `prompts/slack/DIRECTIVES.md`
-- **line** — see [LINE-GUIDE.md](LINE-GUIDE.md)
-- **whisper** (voice transcription) — see [WHISPER-GUIDE.md](WHISPER-GUIDE.md)
-- **agentic** (per-turn model routing) — comments in `settings.json` cover the hysteresis gates inline
-- **agentBus** — cross-agent comms — see [AGENT-BUS.md](AGENT-BUS.md)
-- **approval** — TUI permission dialog routing to Telegram inline buttons
-- **security** — tool allowlist/disallowlist + `--dangerously-skip-permissions` gating
-
-If a field is missing from this doc, it's either (a) self-documenting via
-inline `"//"` comments in the JSON, or (b) inherited from upstream
-`claudeclaw2/src/init.ts` template defaults — read that file for canonical
-shape.
+Memory-cap eviction:
+```
+[runner-shim] memory <usedMB>MB > <capMB>MB cap → evicting LRU channel <channelKey>
+[runner-shim]   evict <channelKey> (LRU memory cap) — killing tmux, session entry preserved
+```

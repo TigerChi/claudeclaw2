@@ -72,8 +72,8 @@ hot-reload loop and on lookup.
 
 ```bash
 bun run ~/.claude/plugins/cache/claudeclaw/claudeclaw/<version>/src/send-and-wait.ts \
-  --to felix \
-  --from dev \
+  --to agent-b \
+  --from agent-a \
   --payload "ping — please reply with 'pong from <your email>'." \
   --timeout 60
 ```
