@@ -985,10 +985,21 @@ async function handleMessage(event: SlackMessage): Promise<void> {
     // Determine thread context for multi-session support.
     // event.thread_ts is set when the message is inside a thread.
     // For the root message of a thread it equals event.ts.
-    // We use it to key per-thread sessions; non-thread messages go to global session.
+    //
+    // v2 — Per-thread sessions for ALL channel messages (not just thread replies):
+    //   DM (im):                    sessionThreadId = undefined  → global session
+    //   non-DM top-level (no thread): use the message's OWN ts as the thread anchor.
+    //                                  Bot replies in that thread (replyThreadTs = event.ts),
+    //                                  follow-ups will have event.thread_ts = anchor → same session.
+    //   non-DM in-thread:           use event.thread_ts as the anchor (unchanged).
+    //
+    // Effect: a brand-new channel message starts its own per-thread Claude session
+    // (clean isolation) instead of dumping into global where TG DMs / cron jobs /
+    // other channels' first messages all mix.
     const inThread = !!event.thread_ts;
     const replyThreadTs = event.thread_ts ?? event.ts; // reply in same thread
-    const sessionThreadId = inThread ? slackThreadId(channelId, event.thread_ts!) : undefined;
+    const threadAnchor = event.thread_ts ?? event.ts;  // session anchor (own ts for new threads)
+    const sessionThreadId = isDirectMessage ? undefined : slackThreadId(channelId, threadAnchor);
 
     // Handle /cancel — abort the in-flight Claude run for this thread/global key
     if (isCancelCommand(cleanText)) {
