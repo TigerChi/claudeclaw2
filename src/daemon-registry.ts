@@ -33,7 +33,7 @@ export async function registerDaemon(): Promise<void> {
     path: process.cwd(),
     pid: process.pid,
     startedAt: Date.now(),
-    version: "v3",
+    version: "v2",
   };
   await writeFile(entryFile(entry.path), JSON.stringify(entry, null, 2) + "\n", { mode: 0o600 });
 }
