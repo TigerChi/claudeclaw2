@@ -9,6 +9,8 @@ export interface DaemonRegistryEntry {
   path: string;
   pid: number;
   startedAt: number;
+  /** Plugin source identifier. v3 writes "v3" so the hub can distinguish. */
+  version?: string;
 }
 
 export function agentIdForPath(path: string): string {
@@ -30,6 +32,7 @@ export async function registerDaemon(): Promise<void> {
     path: process.cwd(),
     pid: process.pid,
     startedAt: Date.now(),
+    version: "v3",
   };
   await writeFile(entryFile(entry.path), JSON.stringify(entry, null, 2) + "\n", { mode: 0o600 });
 }
@@ -64,6 +67,7 @@ export async function listRegisteredDaemons(): Promise<DaemonRegistryEntry[]> {
         path: parsed.path,
         pid: parsed.pid,
         startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : 0,
+        version: typeof parsed.version === "string" ? parsed.version : undefined,
       });
     } catch {
       try { await unlink(filePath); } catch {}

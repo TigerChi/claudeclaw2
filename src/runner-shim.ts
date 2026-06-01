@@ -159,6 +159,7 @@ async function ensureChannel(key: string): Promise<ChannelEntry> {
     },
     onTurnEnd: () => {
       const final = handler.buffer.trim();
+      console.log(`[runner-shim] onTurnEnd key=${key} bufLen=${final.length} hasResolve=${!!handler.resolve}`);
       try { handler.onResultCb?.(final); } catch (err) {
         console.error("[runner-shim] onResult threw:", err);
       }
@@ -220,9 +221,16 @@ export function onCompactEvent(_listener: (e: CompactEvent) => void): void {
 
 async function withChannel<T>(threadId: string | undefined, fn: (entry: ChannelEntry) => Promise<T>): Promise<T> {
   const key = threadIdToChannelKey(threadId);
+  console.log(`[runner-shim] withChannel threadId=${threadId} key=${key}`);
   const entry = await ensureChannel(key);
   const prev = entry.busy;
-  const next = prev.catch(() => {}).then(() => fn(entry));
+  const next = prev.catch(() => {}).then(() => {
+    console.log(`[runner-shim] fn-start key=${key}`);
+    return fn(entry).then(
+      (v) => { console.log(`[runner-shim] fn-resolved key=${key}`); return v; },
+      (e) => { console.log(`[runner-shim] fn-rejected key=${key}: ${e instanceof Error ? e.message : e}`); throw e; },
+    );
+  });
   entry.busy = next.catch(() => {});
   return next;
 }

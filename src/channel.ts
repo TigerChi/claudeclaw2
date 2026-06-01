@@ -384,7 +384,12 @@ export class Channel {
         projectDir,
       });
       const cmdLine = args.map(shellQuote).join(" ");
-      await sendKeys(target, cmdLine);
+      // v3 fix: sendKeys translates literal newlines into Enter keystrokes,
+      // which broke our long multi-line --append-system-prompt by closing the
+      // shell quote mid-string ("quote>" PS2 traps). pasteText goes via
+      // tmux load-buffer + paste-buffer (bracketed paste), so newlines in the
+      // command stay literal and bash sees the whole line atomically.
+      await pasteText(target, cmdLine);
       await new Promise((r) => setTimeout(r, 100));
       await pressEnter(target);
     }
@@ -416,7 +421,12 @@ export class Channel {
   private startTailing(): void {
     if (this.tailer) return;
     const path = jsonlPathFor(this.opts.session.sessionId, this.opts.projectDir);
-    this.tailer = tailJsonl(path, (ev) => this.onJsonlEvent(ev));
+    // v3 fix: idle channels can wait HOURS before the first user message
+    // triggers claude to write JSONL. Default 30s deadline gives up too
+    // early. Bump to effectively-forever (24h) so the tail keeps watching.
+    this.tailer = tailJsonl(path, (ev) => this.onJsonlEvent(ev), {
+      waitForCreateMs: 24 * 60 * 60 * 1000,
+    });
   }
 
   private async onJsonlEvent(ev: JsonlEvent): Promise<void> {
