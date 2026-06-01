@@ -292,13 +292,45 @@ async function pushMessage(
   });
 }
 
+/**
+ * LINE doesn't render ANY markdown — turn claude's typical markdown into
+ * plain text so users don't see literal `**bold**`, `# Header`, etc.
+ * Code blocks and inline code keep their content (drop the fences/backticks).
+ */
+function stripMarkdownForLine(text: string): string {
+  if (!text) return text;
+  // Code blocks: ```lang\nbody\n``` -> just body
+  text = text.replace(/```[\w]*\n?([\s\S]*?)```/g, (_m, code) => code);
+  // Inline code: `x` -> x
+  text = text.replace(/`([^`\n]+)`/g, "$1");
+  // Links: [label](url) -> "label (url)"
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
+  // Headers: '# X' / '## X' -> X
+  text = text.replace(/^#{1,6}\s+(.+?)$/gm, "$1");
+  // Blockquotes: '> X' -> X
+  text = text.replace(/^>\s+(.+?)$/gm, "$1");
+  // Bold: **X** / __X__ -> X
+  text = text.replace(/\*\*([^*\n]+?)\*\*/g, "$1");
+  text = text.replace(/__([^_\n]+?)__/g, "$1");
+  // Italic: *X* / _X_ -> X (only when surrounded by non-word, conservative)
+  text = text.replace(/(?<![*\w])\*([^*\n]+?)\*(?!\w)/g, "$1");
+  text = text.replace(/(?<![_\w])_([^_\n]+?)_(?!\w)/g, "$1");
+  // Strikethrough: ~~X~~ -> X
+  text = text.replace(/~~([^~\n]+?)~~/g, "$1");
+  // Bullets: '- ' / '* ' at line start -> '• '
+  text = text.replace(/^[-*]\s+/gm, "• ");
+  return text;
+}
+
 async function sendText(
   to: string,
   text: string,
   replyToken?: string,
 ): Promise<void> {
   // Strip [react:...] directives (LINE doesn't support reactions)
-  const normalized = text.replace(/\[react:[^\]\r\n]+\]/gi, "").trim();
+  let normalized = text.replace(/\[react:[^\]\r\n]+\]/gi, "").trim();
+  // LINE renders no markdown — convert to plain text.
+  normalized = stripMarkdownForLine(normalized);
   if (!normalized) return;
 
   // LINE max 5000 chars per message, max 5 messages per reply
