@@ -1,0 +1,5 @@
+{
+  "name": "claudeclaw3",
+  "version": "1.2.0",
+  "description": "ClaudeClaw v3 \u2014 tmux + JSONL engine (fork of v1 with hans-style execution, NO silent reply suppression)"
+}
