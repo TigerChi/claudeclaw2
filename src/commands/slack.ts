@@ -1,4 +1,4 @@
-import { ensureProjectClaudeMd, runUserMessage, streamUserMessage, compactCurrentSession, cancelThread } from "../runner-shim";
+import { ensureProjectClaudeMd, runUserMessage, streamUserMessage, compactCurrentSession, cancelThread, trackInflight, untrackInflight } from "../runner-shim";
 import { isCancelCommand, CANCEL_CONFIRM_MESSAGE, CANCEL_NOTHING_MESSAGE } from "../cancel";
 import { getSettings, loadSettings } from "../config";
 import { resetSession, peekSession } from "../sessions";
@@ -1160,6 +1160,17 @@ async function handleMessage(event: SlackMessage): Promise<void> {
     let lastStreamUpdate = 0;
     let finalResultText: string | null = null;
 
+    // Persist in-flight context so a daemon restart mid-turn can detect
+    // (and eventually recover — phase 2) which reply was lost. Cleared on
+    // successful completion, otherwise survives in inflight.json.
+    const inflightKey = sessionThreadId ?? "global";
+    await trackInflight(
+      inflightKey,
+      "slack",
+      { channelId, threadTs: replyThreadTs, messageTs: event.ts },
+      prefixedPrompt,
+    ).catch(() => {});
+
     try {
       await streamUserMessage(
         "slack",
@@ -1182,7 +1193,9 @@ async function handleMessage(event: SlackMessage): Promise<void> {
         sessionThreadId,
         (text: string) => { finalResultText = text; },
       );
+      await untrackInflight(inflightKey).catch(() => {});
     } catch (err) {
+      await untrackInflight(inflightKey).catch(() => {});
       clearInterval(statusRefreshInterval);
       await removeReaction(config.botToken, channelId, event.ts, "hourglass_flowing_sand");
       await clearAssistantStatus(config.botToken, channelId, replyThreadTs);

@@ -26,6 +26,7 @@ import { Channel, type ChannelCallbacks, type ReplyTarget } from "./channel";
 import { loadSessions, saveSessions, tmuxNameFor, type ChannelSession, type ChannelKind } from "./channel-sessions";
 import type { Settings } from "./config";
 import { hasSession } from "./tmux";
+import { reportAndClearLeftoverInflight } from "./inflight-store";
 
 // ---------- context (set once at daemon startup) ----------
 
@@ -38,7 +39,16 @@ let context: ShimContext | null = null;
 
 export function initRunnerShim(ctx: ShimContext): void {
   context = ctx;
+  // Loss-detection for in-flight turns that didn't complete before last
+  // shutdown. Async, fire-and-forget — daemon startup doesn't block on it.
+  void reportAndClearLeftoverInflight().catch((err) =>
+    console.error("[runner-shim] inflight startup check failed:", err)
+  );
 }
+
+// Re-export inflight helpers so platform handlers can wrap their
+// runUserMessage / streamUserMessage calls without importing both modules.
+export { trackInflight, untrackInflight } from "./inflight-store";
 
 function getCtx(): ShimContext {
   if (!context) {

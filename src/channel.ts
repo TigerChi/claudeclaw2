@@ -445,7 +445,10 @@ export class Channel {
       await pressEnter(target);
     }
 
-    this.startTailing();
+    // v3: do NOT start JSONL tail here. claude hasn't been prompted yet so
+    // the JSONL file doesn't exist; an idle channel would spin a futile poll
+    // until the first message arrives (potentially hours later). startTailing
+    // is now lazy — fires from paste() once we actually expect JSONL writes.
 
     const result = await waitForReady({ target });
     if (result.status !== "ready") {
@@ -469,15 +472,21 @@ export class Channel {
     this.opts.callbacks.onError?.(err);
   }
 
+  /**
+   * Idempotent. Called lazily from `paste()` (and from auto-wake) — never
+   * from `start()`, because before the first user message the JSONL file
+   * doesn't exist and a tail would just spin polling.
+   *
+   * On daemon restart with tmux still alive, paste() arrives → tail starts
+   * → JSONL already exists → fromCurrentSize means we only see NEW events.
+   * Old turns in JSONL are not re-emitted (good).
+   */
   private startTailing(): void {
     if (this.tailer) return;
     const path = jsonlPathFor(this.opts.session.sessionId, this.opts.projectDir);
-    // v3 fix: idle channels can wait HOURS before the first user message
-    // triggers claude to write JSONL. Default 30s deadline gives up too
-    // early. Bump to effectively-forever (24h) so the tail keeps watching.
-    this.tailer = tailJsonl(path, (ev) => this.onJsonlEvent(ev), {
-      waitForCreateMs: 24 * 60 * 60 * 1000,
-    });
+    // Default 30s wait-for-create is fine now — paste() pastes right after
+    // calling this, so claude starts writing JSONL within seconds.
+    this.tailer = tailJsonl(path, (ev) => this.onJsonlEvent(ev));
   }
 
   private async onJsonlEvent(ev: JsonlEvent): Promise<void> {
@@ -971,6 +980,7 @@ export class Channel {
     // turn them into ordinary text that claude routes to the model instead
     // of intercepting client-side.
     if (isPassthroughSlashCommand(item.text)) {
+      this.startTailing();         // lazy tail also needed here — some slash commands write JSONL
       this.startTypingPulse();
       this.startApprovalPoll();
       this.armStallTimer();
@@ -994,6 +1004,7 @@ export class Channel {
     const promptBody = item.rawPrompt ? item.text : this.formatPromptBody(item);
     const full = [inboxText, promptBody].filter(Boolean).join("\n\n");
 
+    this.startTailing();         // lazy: only now do we know JSONL is about to exist
     this.startTypingPulse();
     this.startApprovalPoll();
     this.startStreamPoll();
