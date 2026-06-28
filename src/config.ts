@@ -134,6 +134,15 @@ export interface SlackConfig {
   allowedUserIds: string[];
   /** Channel IDs where the bot responds to every message without needing a mention */
   listenChannels: string[];
+  /** Session granularity for channel (non-DM) messages:
+   *    "thread"  — every Slack thread gets its own Claude session (max isolation; default).
+   *    "channel" — all threads in a channel share one session (fewer sessions, shared context).
+   *  DMs are unaffected: each DM always has its own per-user session.
+   *  Defaults to "thread" when omitted. */
+  sessionGranularity?: "channel" | "thread";
+  /** Per-channel overrides of sessionGranularity, keyed by Slack channel ID (e.g. "C0AP53KLHNK").
+   *  An entry here wins over the agent-wide sessionGranularity for that channel. */
+  sessionChannelOverrides?: Record<string, "channel" | "thread">;
 }
 
 /** Per-group configuration overrides for LINE groups/rooms.
@@ -452,6 +461,18 @@ function parseSettings(raw: Record<string, any>, _extractedDiscordUserIds?: stri
       listenChannels: Array.isArray(raw.slack?.listenChannels)
         ? raw.slack.listenChannels.map(String)
         : [],
+      sessionGranularity:
+        raw.slack?.sessionGranularity === "channel" || raw.slack?.sessionGranularity === "thread"
+          ? raw.slack.sessionGranularity
+          : undefined,
+      sessionChannelOverrides:
+        raw.slack?.sessionChannelOverrides && typeof raw.slack.sessionChannelOverrides === "object"
+          ? (Object.fromEntries(
+              Object.entries(raw.slack.sessionChannelOverrides as Record<string, unknown>).filter(
+                ([, v]) => v === "channel" || v === "thread",
+              ),
+            ) as Record<string, "channel" | "thread">)
+          : undefined,
     },
     line: {
       channelAccessToken: typeof raw.line?.channelAccessToken === "string" ? raw.line.channelAccessToken.trim() : "",

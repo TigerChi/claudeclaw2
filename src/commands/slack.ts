@@ -221,9 +221,12 @@ async function slackApi<T = Record<string, unknown>>(
 async function setAssistantStatus(
   token: string,
   channelId: string,
-  threadTs: string,
+  threadTs: string | undefined,
   status: string,
 ): Promise<void> {
+  // assistant.threads.setStatus requires a thread_ts. Flat DM replies have no
+  // thread, so there's no assistant thread to set a status on — skip silently.
+  if (!threadTs) return;
   await slackApi(token, "assistant.threads.setStatus", {
     channel_id: channelId,
     thread_ts: threadTs,
@@ -236,8 +239,9 @@ async function setAssistantStatus(
 async function clearAssistantStatus(
   token: string,
   channelId: string,
-  threadTs: string,
+  threadTs: string | undefined,
 ): Promise<void> {
+  if (!threadTs) return;
   await slackApi(token, "assistant.threads.setStatus", {
     channel_id: channelId,
     thread_ts: threadTs,
@@ -1010,9 +1014,17 @@ async function handleMessage(event: SlackMessage): Promise<void> {
     // Channels/groups keep threading (reply in the originating thread).
     const replyThreadTs = isDirectMessage ? undefined : (event.thread_ts ?? event.ts);
     const threadAnchor = event.thread_ts ?? event.ts;  // session anchor (own ts for new threads)
+    // Channel-message session key honours the configured granularity:
+    //   "channel" → all threads in this channel share one session (slk:<channelId>)
+    //   "thread"  → each thread its own session (slk:<channelId>:<threadAnchor>; default)
+    // Per-channel override wins over the agent-wide default. DMs are always per-user.
+    const channelGranularity =
+      config.sessionChannelOverrides?.[channelId] ?? config.sessionGranularity ?? "thread";
     const sessionThreadId = isDirectMessage
       ? `slk:${channelId}`
-      : slackThreadId(channelId, threadAnchor);
+      : channelGranularity === "channel"
+        ? `slk:${channelId}`
+        : slackThreadId(channelId, threadAnchor);
 
     // Handle /cancel — abort the in-flight Claude run for this thread/global key
     if (isCancelCommand(cleanText)) {
