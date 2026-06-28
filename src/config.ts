@@ -198,6 +198,14 @@ export interface SessionCleanupConfig {
   /** When the agent's claude RSS total exceeds this, evict oldest idle
    *  channels until under cap. 0 = disabled. */
   maxMemoryMb?: number;
+  /** Per-channel context budget. When a turn's usage (input + cache_read +
+   *  cache_creation) reaches this, the channel auto-pastes /compact to ride
+   *  ahead of the model's window limit. 0 = disabled. Default 180000
+   *  (sonnet standard 200K with 10% headroom). For opus 1M tier set ~800000. */
+  compactAtTokens?: number;
+  /** After an auto-compact fires, suppress further triggers for this long
+   *  so the next turn's usage has time to drop. Default 10. */
+  compactCooldownMinutes?: number;
 }
 
 export interface Settings {

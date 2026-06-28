@@ -382,6 +382,11 @@ async function ensureChannel(key: string): Promise<ChannelEntry> {
     },
   };
 
+  const cleanup = ctx.settings.sessionCleanup;
+  const compactCooldownMs =
+    typeof cleanup?.compactCooldownMinutes === "number"
+      ? cleanup.compactCooldownMinutes * 60_000
+      : undefined;
   const channel = new Channel({
     session,
     security: ctx.settings.security,
@@ -389,6 +394,8 @@ async function ensureChannel(key: string): Promise<ChannelEntry> {
     callbacks,
     defaultModel: ctx.settings.model,
     agentic: ctx.settings.agentic,
+    compactAtTokens: cleanup?.compactAtTokens,
+    compactCooldownMs,
   });
 
   const starting = channel.start({ resume }).catch((err) => {

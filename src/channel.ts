@@ -177,6 +177,13 @@ export interface ChannelOptions {
   /** Timezone offset in minutes (e.g. +480 for UTC+8). Used to render the
    *  timestamp line on the prompt prefix. */
   timezoneOffsetMinutes?: number;
+  /** Auto-compact threshold. When the assistant turn's usage (input +
+   *  cache_read + cache_creation) reaches this, the channel queues a
+   *  `/compact` after the turn ends. 0 / undefined = disabled. */
+  compactAtTokens?: number;
+  /** Cooldown after an auto-compact triggers — further checks are skipped
+   *  for this many milliseconds. Default 600_000 (10 min). */
+  compactCooldownMs?: number;
 }
 
 function encodeProjectDir(projectDir: string): string {
@@ -379,6 +386,11 @@ export class Channel {
   /** userTurnCounter snapshot at the last actual model switch. */
   private userTurnAtLastSwitch: number = 0;
 
+  /** True while an auto-compact /compact is in flight; prevents re-entry. */
+  private autoCompactInFlight: boolean = false;
+  /** Timestamp of the last auto-compact trigger, for cooldown gating. */
+  private lastAutoCompactAtMs: number = 0;
+
   constructor(private readonly opts: ChannelOptions) {
     this.currentModel = opts.defaultModel ?? "";
   }
@@ -569,6 +581,7 @@ export class Channel {
           break;
         }
         case "turn-end":
+          this.maybeTriggerAutoCompact(ev.raw);
           this.onTurnEnd();
           break;
         // Skipped: system, unknown
@@ -733,6 +746,61 @@ export class Channel {
     this.state = "idle";
     void this.opts.callbacks.onTurnEnd?.();
     void this.drainQueue();
+  }
+
+  /**
+   * After every assistant `end_turn`, peek at the line's usage block. If the
+   * combined input + cache_read + cache_creation has reached the configured
+   * compactAtTokens budget, enqueue a `/compact` so the next turn fits inside
+   * the model's context window. Self-gated by `autoCompactInFlight` and a
+   * cooldown so it never fires back-to-back while the same big turn echoes
+   * through multiple jsonl events.
+   *
+   * Why this lives here vs runner-shim: Channel already owns the jsonl tail
+   * and queue; piping a synthetic /compact through `handleIncoming` makes it
+   * follow the same drain ordering as a user-typed slash command.
+   */
+  private maybeTriggerAutoCompact(raw: any): void {
+    const threshold = this.opts.compactAtTokens ?? 0;
+    if (threshold <= 0) return;
+    if (this.autoCompactInFlight) return;
+
+    const cooldownMs = this.opts.compactCooldownMs ?? 600_000;
+    if (Date.now() - this.lastAutoCompactAtMs < cooldownMs) return;
+
+    const usage = raw?.message?.usage;
+    if (!usage || typeof usage !== "object") return;
+    const total =
+      (typeof usage.input_tokens === "number" ? usage.input_tokens : 0) +
+      (typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0) +
+      (typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0);
+    if (total < threshold) return;
+
+    console.log(
+      `[channel ${this.opts.session.channelKey}] auto-compact: context ${total} tokens >= threshold ${threshold} — queueing /compact`,
+    );
+    this.autoCompactInFlight = true;
+    this.lastAutoCompactAtMs = Date.now();
+
+    // Defer to the next tick so onTurnEnd() (which transitions state→idle and
+    // drains the queue) completes first. Then enqueue /compact as a normal
+    // QueueItem; the channel's drain loop picks it up like any user message.
+    setImmediate(() => {
+      void this.handleIncoming({
+        text: "/compact",
+        fromLabel: "auto-compact",
+        replyTo: null,
+      })
+        .catch((err) => {
+          console.error(
+            `[channel ${this.opts.session.channelKey}] auto-compact handleIncoming failed:`,
+            err,
+          );
+        })
+        .finally(() => {
+          this.autoCompactInFlight = false;
+        });
+    });
   }
 
   /**
