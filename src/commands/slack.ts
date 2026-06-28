@@ -2014,6 +2014,33 @@ export async function sendMessageToUser(
   await sendMessage(token, data.channel.id, text);
 }
 
+/**
+ * Post to an explicit Slack target instead of a user's DM. Used by cron jobs
+ * and heartbeat that configure a fixed channel/thread.
+ *
+ * Target grammar:
+ *   "<channelId>"              → post top-level in that channel/DM
+ *   "<channelId>:<threadTs>"   → post inside that thread (threadTs is "digits.digits")
+ *
+ * The thread suffix is only split off when the part after the last ":" looks
+ * like a Slack ts (e.g. 1780452052.907709), so channel ids that contain no ts
+ * are passed through untouched.
+ */
+export async function sendMessageToTarget(
+  token: string,
+  target: string,
+  text: string,
+): Promise<void> {
+  const sep = target.lastIndexOf(":");
+  let channelId = target;
+  let threadTs: string | undefined;
+  if (sep > 0 && /^\d+\.\d+$/.test(target.slice(sep + 1))) {
+    channelId = target.slice(0, sep);
+    threadTs = target.slice(sep + 1);
+  }
+  await sendMessage(token, channelId, text, threadTs);
+}
+
 export function stopSlack(): void {
   if (abortController) {
     abortController.abort();

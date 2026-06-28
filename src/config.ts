@@ -102,6 +102,12 @@ export interface HeartbeatConfig {
   prompt: string;
   excludeWindows: HeartbeatExcludeWindow[];
   forwardToTelegram: boolean;
+  /**
+   * Optional Slack target for heartbeat output: "<channelId>" or
+   * "<channelId>:<threadTs>". When set, Slack heartbeats post to this
+   * channel/thread instead of broadcasting to each allowed user's DM.
+   */
+  slackTarget?: string;
 }
 
 export interface TelegramPairingConfig {
@@ -426,6 +432,7 @@ function parseSettings(raw: Record<string, any>, _extractedDiscordUserIds?: stri
       prompt: raw.heartbeat?.prompt ?? "",
       excludeWindows: parseExcludeWindows(raw.heartbeat?.excludeWindows),
       forwardToTelegram: raw.heartbeat?.forwardToTelegram ?? false,
+      slackTarget: raw.heartbeat?.slackTarget || undefined,
     },
     telegram: {
       token: raw.telegram?.token ?? "",

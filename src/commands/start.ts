@@ -478,21 +478,24 @@ export async function start(args: string[] = []) {
 
   // --- Slack ---
   let slackSendToUser: ((userId: string, text: string) => Promise<void>) | null = null;
+  let slackSendToTarget: ((target: string, text: string) => Promise<void>) | null = null;
   let slackBotToken = "";
 
   async function initSlack(botToken: string) {
     if (botToken && botToken !== slackBotToken) {
-      const { startSlack, sendMessageToUser: slackSend, stopSlack, stopSlackGraceful } = await import("./slack");
+      const { startSlack, sendMessageToUser: slackSend, sendMessageToTarget: slackSendTarget, stopSlack, stopSlackGraceful } = await import("./slack");
       if (slackBotToken) stopSlack();
       startSlack(debugFlag);
       slackStop = stopSlackGraceful;
       slackSendToUser = (userId, text) => slackSend(botToken, userId, text);
+      slackSendToTarget = (target, text) => slackSendTarget(botToken, target, text);
       slackBotToken = botToken;
       console.log(`[${ts()}] Slack: enabled`);
     } else if (!botToken && slackBotToken) {
       if (slackStop) await slackStop();
       slackStop = null;
       slackSendToUser = null;
+      slackSendToTarget = null;
       slackBotToken = "";
       console.log(`[${ts()}] Slack: disabled`);
     }
@@ -664,11 +667,23 @@ export async function start(args: string[] = []) {
     }
   }
 
-  function forwardToSlack(label: string, result: { exitCode: number; stdout: string; stderr: string }) {
-    if (!slackSendToUser || currentSettings.slack.allowedUserIds.length === 0) return;
+  function forwardToSlack(
+    label: string,
+    result: { exitCode: number; stdout: string; stderr: string },
+    target?: string,
+  ) {
     const text = result.exitCode === 0
       ? `${label ? `[${label}]\n` : ""}${result.stdout || "(empty)"}`
       : `${label ? `[${label}] ` : ""}error (exit ${result.exitCode}): ${result.stderr || "Unknown"}`;
+    // Explicit channel/thread target (cron job slackTarget / heartbeat slackTarget):
+    // post once to that target instead of broadcasting to each allowed user's DM.
+    if (target && slackSendToTarget) {
+      slackSendToTarget(target, text).catch((err) =>
+        console.error(`[Slack] Failed to forward to target ${target}: ${err}`)
+      );
+      return;
+    }
+    if (!slackSendToUser || currentSettings.slack.allowedUserIds.length === 0) return;
     for (const userId of currentSettings.slack.allowedUserIds) {
       slackSendToUser(userId, text).catch((err) =>
         console.error(`[Slack] Failed to forward to ${userId}: ${err}`)
@@ -739,7 +754,7 @@ export async function start(args: string[] = []) {
           if (shouldForward) {
             forwardToTelegram("", r);
             forwardToDiscord("", r);
-            forwardToSlack("", r);
+            forwardToSlack("", r, currentSettings.heartbeat.slackTarget);
             forwardToLine("", r);
           }
         });
@@ -978,11 +993,14 @@ export async function start(args: string[] = []) {
           .then((r) => {
               if (job.notify === false) return;
             if (job.notify === "error" && r.exitCode === 0) return;
+            // Empty stdout on success = the job chose to stay silent (e.g. a
+            // threshold monitor under its alert level). Don't forward "(empty)".
+            if (r.exitCode === 0 && !r.stdout.trim()) return;
             const wantAll = job.channels.length === 0;
             const want = (c: string) => wantAll || job.channels.includes(c as never);
             if (want("telegram")) forwardToTelegram(job.name, r);
             if (want("discord")) forwardToDiscord(job.name, r);
-            if (want("slack")) forwardToSlack(job.name, r);
+            if (want("slack")) forwardToSlack(job.name, r, job.slackTarget);
             if (want("line")) forwardToLine(job.name, r);
           })
           .finally(async () => {

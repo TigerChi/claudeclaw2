@@ -13,6 +13,12 @@ export interface Job {
   notify: true | false | "error";
   /** Channels to forward to. Empty = broadcast to all enabled channels (legacy behavior). */
   channels: Channel[];
+  /**
+   * Optional Slack target override: "<channelId>" or "<channelId>:<threadTs>".
+   * When set, Slack output goes to this channel/thread instead of broadcasting
+   * to each allowed user's DM. Other channels (telegram/discord/line) ignore it.
+   */
+  slackTarget?: string;
 }
 
 const KNOWN_CHANNELS: Channel[] = ["telegram", "discord", "slack", "line"];
@@ -69,7 +75,12 @@ function parseJobFile(name: string, content: string): Job | null {
           .map((c) => c.trim())
           .filter((c): c is Channel => (KNOWN_CHANNELS as string[]).includes(c));
 
-  return { name, schedule, prompt, recurring, notify, channels };
+  const slackTargetLine = lines.find((l) => l.startsWith("slackTarget:"));
+  const slackTarget = slackTargetLine
+    ? parseFrontmatterValue(slackTargetLine.replace("slackTarget:", "")) || undefined
+    : undefined;
+
+  return { name, schedule, prompt, recurring, notify, channels, slackTarget };
 }
 
 export async function loadJobs(): Promise<Job[]> {
