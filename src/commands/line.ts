@@ -416,10 +416,11 @@ function sanitizeUserInput(text: string): string {
 // --- Thread/session ID helpers ---
 
 function lineSessionId(source: LineMessageEvent["source"]): string | undefined {
-  // Group and room chats get their own session; DMs go to global session
+  // Every chat type gets its own session; only system/automation use global.
   if (source.groupId) return `line:group:${source.groupId}`;
   if (source.roomId) return `line:room:${source.roomId}`;
-  return undefined; // DM uses global session
+  if (source.userId) return `line:dm:${source.userId}`; // 1:1 DM → own per-user session
+  return undefined; // no identifiable source → fall back to global
 }
 
 function getChatId(source: LineMessageEvent["source"]): string {

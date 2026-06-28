@@ -987,19 +987,32 @@ async function handleMessage(event: SlackMessage): Promise<void> {
     // For the root message of a thread it equals event.ts.
     //
     // v2 — Per-thread sessions for ALL channel messages (not just thread replies):
-    //   DM (im):                    sessionThreadId = undefined  → global session
+    //   DM (im):                    sessionThreadId = slk:<dmChannelId>  → own per-DM session.
+    //                                  The DM channel id (D...) is stable per user, so every
+    //                                  message in this DM resumes the same session, and each
+    //                                  user's DM is isolated from every other DM and from global.
     //   non-DM top-level (no thread): use the message's OWN ts as the thread anchor.
     //                                  Bot replies in that thread (replyThreadTs = event.ts),
     //                                  follow-ups will have event.thread_ts = anchor → same session.
     //   non-DM in-thread:           use event.thread_ts as the anchor (unchanged).
     //
     // Effect: a brand-new channel message starts its own per-thread Claude session
-    // (clean isolation) instead of dumping into global where TG DMs / cron jobs /
-    // other channels' first messages all mix.
+    // (clean isolation). DMs no longer funnel into the shared global session, so a
+    // wedged DM run can't block every other DM (and TG DMs / cron / agent-bus still
+    // own global on their own).
     const inThread = !!event.thread_ts;
-    const replyThreadTs = event.thread_ts ?? event.ts; // reply in same thread
+    // In DMs reply flat (no thread_ts) so the whole DM stays one continuous
+    // conversation. Otherwise the bot threads under each top-level message —
+    // and since cron/proactive posts (mem-monitor etc.) are top-level, every
+    // one spawns its own thread, fragmenting the DM into many little threads
+    // that each look like a separate session. The DM session is already
+    // unified on slk:<channelId>, so flat replies match that reality.
+    // Channels/groups keep threading (reply in the originating thread).
+    const replyThreadTs = isDirectMessage ? undefined : (event.thread_ts ?? event.ts);
     const threadAnchor = event.thread_ts ?? event.ts;  // session anchor (own ts for new threads)
-    const sessionThreadId = isDirectMessage ? undefined : slackThreadId(channelId, threadAnchor);
+    const sessionThreadId = isDirectMessage
+      ? `slk:${channelId}`
+      : slackThreadId(channelId, threadAnchor);
 
     // Handle /cancel — abort the in-flight Claude run for this thread/global key
     if (isCancelCommand(cleanText)) {

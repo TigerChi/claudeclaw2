@@ -676,8 +676,11 @@ async function handleMessageCreate(token: string, message: DiscordMessage): Prom
     }
 
     const prefixedPrompt = promptParts.join("\n");
-    // Use thread-specific session if message is in a known thread
-    const threadId = knownThreads.has(channelId) ? channelId : undefined;
+    // Session key: DMs get their own per-user session (the DM channel id is stable
+    // per user); known guild threads keep their per-thread session. A guild
+    // top-level channel message that isn't a tracked thread still falls back to
+    // global (unchanged — full guild-channel granularity is a separate follow-up).
+    const threadId = isDM ? channelId : knownThreads.has(channelId) ? channelId : undefined;
 
     // /cancel — abort in-flight Claude run for this thread
     if (isCancelCommand(cleanContent)) {
