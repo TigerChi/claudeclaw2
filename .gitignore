@@ -1,4 +1,5 @@
 .claude
 .codemachine
-AGENTS.md.DS_Store
+AGENTS.md
+.DS_Store
 node_modules
