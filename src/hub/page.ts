@@ -66,6 +66,11 @@ export function hubPage(): string {
     }
     .vbadge.v-v1 { background: #30363d; color: #8b949e; }
     .vbadge.v-v3 { background: #1f6feb; color: #fff; }
+    .mbadge {
+      display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+      margin-left: 4px; vertical-align: middle; font-weight: 600; letter-spacing: 0.3px;
+      background: #3b2667; color: #c9a7ff;
+    }
     section.detail {
       flex: 1;
       padding: 24px;
@@ -459,11 +464,14 @@ export function hubPage(): string {
           const version = a.version || "v1";
           const vBadge =
             '<span class="vbadge v-' + version + '" title="plugin source: ' + version + '">' + version + '</span>';
+          const mBadge = a.model
+            ? '<span class="mbadge" title="model: ' + escapeAttr(a.model) + '">' + escapeAttr(fmtModel(a.model)) + '</span>'
+            : '';
           aside +=
             '<div class="agent ' + (a.id === state.selectedId ? "active" : "") + '" data-id="' + a.id + '">' +
             '<span class="dot ' + (a.alive ? "alive" : "") + '"></span>' +
             '<div class="meta">' +
-            '<div class="path" title="' + a.path + '">' + name + ' ' + vBadge + '</div>' +
+            '<div class="path" title="' + a.path + '">' + name + ' ' + vBadge + mBadge + '</div>' +
             '<div class="sub">' + (a.alive ? ("PID " + a.pid + (a.web ? " — :" + a.web.port : "")) : "stopped") + '</div>' +
             '</div></div>';
         }
@@ -488,6 +496,7 @@ export function hubPage(): string {
           row("Path", agent.path) +
           row("ID", agent.id) +
           row("Version", agent.version || "v1") +
+          row("Model", agent.model ? escapeAttr(agent.model) : "default") +
           row("Status", agent.alive ? "running" : "stopped") +
           row("PID", agent.pid != null ? String(agent.pid) : "—") +
           row("Web", agent.web ? agent.web.host + ":" + agent.web.port : "—") +
@@ -594,6 +603,11 @@ export function hubPage(): string {
 
     function row(label, value) {
       return '<div class="row"><div class="label">' + label + '</div><div class="value">' + value + '</div></div>';
+    }
+
+    // "claude-fable-5" → "fable-5"; aliases like "opus" pass through
+    function fmtModel(m) {
+      return String(m).replace(/^claude-/, "");
     }
 
     function escapeAttr(s) {
