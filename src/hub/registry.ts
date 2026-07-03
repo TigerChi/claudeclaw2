@@ -19,8 +19,6 @@ export interface AgentRecord {
   linePairing: LinePairingInfo | null;
   /** Plugin source — "v1" (legacy default) or "v3" (tmux engine). */
   version: string;
-  /** LLM model from the agent's settings.json — null = Claude Code default. */
-  model: string | null;
 }
 
 export { agentIdForPath };
@@ -30,28 +28,21 @@ interface ParsedState {
   web: { host: string; port: number } | null;
 }
 
-async function readAgentSettings(
-  projectPath: string,
-): Promise<{ linePairing: LinePairingInfo | null; model: string | null }> {
+async function readLinePairing(projectPath: string): Promise<LinePairingInfo | null> {
   const settingsFile = join(projectPath, ".claude", "claudeclaw", "settings.json");
   try {
     const raw = await readFile(settingsFile, "utf-8");
     const parsed = JSON.parse(raw);
-    const model =
-      typeof parsed?.model === "string" && parsed.model.trim() ? parsed.model.trim() : null;
     const line = parsed?.line;
     const pairing = line?.pairing;
-    const linePairing =
-      pairing?.enabled && typeof pairing.code === "string" && pairing.code
-        ? {
-            code: pairing.code,
-            webhookPath: typeof line.webhookPath === "string" ? line.webhookPath : "",
-            webhookPort: Number.isFinite(line.webhookPort) ? Number(line.webhookPort) : 0,
-          }
-        : null;
-    return { linePairing, model };
+    if (!pairing?.enabled || typeof pairing.code !== "string" || !pairing.code) return null;
+    return {
+      code: pairing.code,
+      webhookPath: typeof line.webhookPath === "string" ? line.webhookPath : "",
+      webhookPort: Number.isFinite(line.webhookPort) ? Number(line.webhookPort) : 0,
+    };
   } catch {
-    return { linePairing: null, model: null };
+    return null;
   }
 }
 
@@ -94,7 +85,7 @@ export async function listAgents(): Promise<AgentRecord[]> {
       alive = true;
     } catch {}
 
-    const [state, settings] = await Promise.all([readState(d.path), readAgentSettings(d.path)]);
+    const [state, linePairing] = await Promise.all([readState(d.path), readLinePairing(d.path)]);
     results.push({
       id: agentIdForPath(d.path),
       path: d.path,
@@ -103,9 +94,8 @@ export async function listAgents(): Promise<AgentRecord[]> {
       web: state.web,
       startedAt: d.startedAt || state.startedAt,
       lastStateAt: state.startedAt,
-      linePairing: settings.linePairing,
+      linePairing,
       version: d.version ?? "v1",
-      model: settings.model,
     });
   }
 
