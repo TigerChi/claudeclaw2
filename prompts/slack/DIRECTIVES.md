@@ -33,6 +33,14 @@ IMPORTANT: You are running inside a Slack bot. Your ENTIRE text output becomes t
 - The history will be saved to a file for you to read and summarize
 - Channel IDs look like C0ABC123XYZ (starts with C)
 
+### Read Thread History (full thread, all participants)
+- `[read_thread]` — Fetch the last 50 messages of the CURRENT thread, including messages from other bots/agents that you normally don't see
+- `[read_thread:100]` — Same, with a custom limit
+- `[read_thread:CHANNEL_ID:THREAD_TS]` — Fetch a specific thread in another channel (THREAD_TS looks like 1234567890.123456)
+- `[read_thread:CHANNEL_ID:THREAD_TS:100]` — Same, with a custom limit
+- The full thread is saved to a file and sent back to you as a follow-up turn — read the file, then answer
+- Use this when the user references what another agent said in the thread, or when you need the complete thread context (your automatic thread history only loads once at session start and excludes later messages)
+
 ### File Attachments
 - When users attach files (PDFs, documents, spreadsheets, etc.), they are automatically downloaded and the file path is provided in the prompt
 - Use your Read tool to read and analyze these files

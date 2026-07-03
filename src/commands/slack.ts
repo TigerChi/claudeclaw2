@@ -675,7 +675,7 @@ async function fetchThreadHistory(
   channelId: string,
   threadTs: string,
   limit: number = 20,
-): Promise<{ role: string; text: string; user?: string; ts: string }[]> {
+): Promise<{ role: string; text: string; user?: string; botName?: string; ts: string }[]> {
   // conversations.replies uses GET-style params — pass as query string via fetch
   const params = new URLSearchParams({
     channel: channelId,
@@ -694,6 +694,8 @@ async function fetchThreadHistory(
       text: string;
       user?: string;
       bot_id?: string;
+      username?: string;
+      bot_profile?: { name?: string };
       ts: string;
     }>;
   };
@@ -705,21 +707,28 @@ async function fetchThreadHistory(
     role: msg.bot_id ? "assistant" : "user",
     text: msg.text,
     user: msg.user,
+    // Distinguish agents in multi-bot threads: own bot vs named other bots
+    botName: msg.bot_id
+      ? (msg.user === botUserId ? "me" : msg.bot_profile?.name ?? msg.username ?? msg.bot_id)
+      : undefined,
     ts: msg.ts,
   }));
 }
 
 function formatThreadHistoryAsContext(
-  messages: { role: string; text: string; user?: string; ts: string }[],
+  messages: { role: string; text: string; user?: string; botName?: string; ts: string }[],
+  header = "Thread History (previous messages)",
 ): string {
   if (messages.length === 0) return "";
 
-  const lines = ["--- Thread History (previous messages) ---"];
+  const lines = [`--- ${header} ---`];
   for (const msg of messages) {
-    const sender = msg.role === "assistant" ? "Bot" : `User ${msg.user ?? "unknown"}`;
+    const sender = msg.role === "assistant"
+      ? (msg.botName === "me" ? "Bot (me)" : `Bot ${msg.botName ?? "unknown"}`)
+      : `User ${msg.user ?? "unknown"}`;
     lines.push(`[${sender}]: ${msg.text}`);
   }
-  lines.push("--- End of Thread History ---");
+  lines.push("--- End ---");
   lines.push("");
   return lines.join("\n");
 }
@@ -851,6 +860,41 @@ function extractChannelReadDirectives(text: string): {
   return { cleanedText: cleaned, channelReads };
 }
 
+// --- Read thread history directive ---
+// [read_thread]                          → current thread, last 50 messages
+// [read_thread:100]                      → current thread, last 100 messages
+// [read_thread:C0ABC123:1234.5678]       → specific thread in another channel
+// [read_thread:C0ABC123:1234.5678:100]   → specific thread with limit
+
+function extractThreadReadDirectives(text: string): {
+  cleanedText: string;
+  threadReads: { channelId?: string; threadTs?: string; limit: number }[];
+} {
+  const threadReads: { channelId?: string; threadTs?: string; limit: number }[] = [];
+  const cleaned = text
+    .replace(/\[read_thread(?::([^\]]+))?\]/gi, (_match, raw) => {
+      if (!raw) {
+        threadReads.push({ limit: 50 });
+      } else {
+        const parts = String(raw).split(":").map((p) => p.trim());
+        if (parts.length === 1 && /^\d+$/.test(parts[0])) {
+          threadReads.push({ limit: parseInt(parts[0], 10) });
+        } else if (parts.length >= 2) {
+          threadReads.push({
+            channelId: parts[0],
+            threadTs: parts[1],
+            limit: parts[2] && /^\d+$/.test(parts[2]) ? parseInt(parts[2], 10) : 50,
+          });
+        } else {
+          threadReads.push({ limit: 50 });
+        }
+      }
+      return "";
+    })
+    .trim();
+  return { cleanedText: cleaned, threadReads };
+}
+
 async function fetchChannelHistory(
   token: string,
   channelId: string,
@@ -894,6 +938,7 @@ function sanitizeUserInput(text: string): string {
     .replace(/\[delete_match:[^\]]*\]/gi, "[delete removed]")
     .replace(/\[upload_file:[^\]]*\]/gi, "[upload removed]")
     .replace(/\[read_channel:[^\]]*\]/gi, "[read removed]")
+    .replace(/\[read_thread(?::[^\]]*)?\]/gi, "[read removed]")
     .replace(/\[\[slack_buttons:[^\]]*\]\]/gi, "[buttons removed]")
     .replace(/\[\[slack_select:[^\]]*\]\]/gi, "[select removed]");
 }
@@ -1277,7 +1322,8 @@ async function handleMessage(event: SlackMessage): Promise<void> {
       const { cleanedText: afterEdit, editContent, deleteCount, deleteMatches } = extractEditDirective(afterReact);
       const { cleanedText: afterUpload, uploads } = extractUploadDirectives(afterEdit);
       const { cleanedText: afterChannelRead, channelReads } = extractChannelReadDirectives(afterUpload);
-      const { cleanedText: finalText, buttons, select } = extractBlockKitDirectives(afterChannelRead);
+      const { cleanedText: afterThreadRead, threadReads } = extractThreadReadDirectives(afterChannelRead);
+      const { cleanedText: finalText, buttons, select } = extractBlockKitDirectives(afterThreadRead);
 
       if (reactionEmoji) {
         await sendReaction(config.botToken, channelId, event.ts, reactionEmoji);
@@ -1364,6 +1410,28 @@ async function handleMessage(event: SlackMessage): Promise<void> {
         }
       }
 
+      // Handle thread read directives — fetch full thread (including other
+      // agents' bot messages) and send as follow-up message to agent
+      for (const read of threadReads) {
+        try {
+          const targetChannel = read.channelId ?? channelId;
+          const targetThreadTs = read.threadTs ?? event.thread_ts ?? event.ts;
+          const history = await fetchThreadHistory(config.botToken, targetChannel, targetThreadTs, read.limit);
+          const formatted = formatThreadHistoryAsContext(
+            history,
+            `Thread ${targetChannel}/${targetThreadTs} (${history.length} messages, all participants)`,
+          );
+          const historyPath = join(process.cwd(), ".claude", "claudeclaw", "inbox", "slack", `thread-${targetChannel}-${targetThreadTs.replace(".", "_")}-${Date.now()}.txt`);
+          await mkdir(join(process.cwd(), ".claude", "claudeclaw", "inbox", "slack"), { recursive: true });
+          await Bun.write(historyPath, formatted);
+          const followUp = `[System] Full thread history for ${targetChannel}/${targetThreadTs} (including other agents' messages) saved to: ${historyPath}\nPlease read this file and respond based on the user's request.`;
+          await runUserMessage("slack", followUp, sessionThreadId);
+          debugLog(`Thread history fetched: ${targetChannel}/${targetThreadTs} → ${historyPath}`);
+        } catch (err) {
+          debugLog(`Failed to fetch thread history: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+
       // Finalize response — update streaming message or replace with Block Kit
       if (finalText) {
         if (buttons || select) {
@@ -1388,7 +1456,7 @@ async function handleMessage(event: SlackMessage): Promise<void> {
             lastBotMessageTs.set(msgKey, streamMsgTs);
           }
         }
-      } else if (streamMsgTs && !editContent && deleteCount === 0 && uploads.length === 0 && channelReads.length === 0) {
+      } else if (streamMsgTs && !editContent && deleteCount === 0 && uploads.length === 0 && channelReads.length === 0 && threadReads.length === 0) {
         // No text, no directives — show empty
         await updateMessage(config.botToken, channelId, streamMsgTs, "(empty response)");
         lastBotMessageTs.set(msgKey, streamMsgTs);
